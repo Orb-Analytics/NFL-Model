@@ -53,6 +53,34 @@ def _with_retries(fn, description: str):
     raise last_exc
 
 
+def _coerce_object_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Fix a dtype trap introduced by loading one season at a time instead
+    of one batched call: if a genuinely-numeric column comes back with a
+    slightly different pandas dtype in different seasons' files (e.g. a
+    nullable Float64/object column in one season vs. plain float64 in
+    another -- confirmed reproducible: pd.concat([Float64-with-nulls,
+    object-with-None]) silently produces `object` dtype), pd.concat falls
+    back to `object` dtype for that column across the WHOLE combined frame.
+    That's silent and only surfaces much later, as a cryptic
+    'Pandas data cast to numpy dtype of object' error out of statsmodels
+    when fitting a model on it.
+
+    Re-coerces any object-dtype column back to numeric where doing so
+    doesn't blow away more than half its values (a genuine string column,
+    e.g. team abbreviations, would fail to convert almost entirely and is
+    correctly left alone).
+    """
+    for col in df.columns:
+        if df[col].dtype != object:
+            continue
+        already_nan = df[col].isna()
+        converted = pd.to_numeric(df[col], errors="coerce")
+        newly_nan = converted.isna() & ~already_nan
+        if len(df) == 0 or (newly_nan.sum() / len(df)) < 0.5:
+            df[col] = converted
+    return df
+
+
 def _load_team_stats_resilient(seasons: list[int]) -> pd.DataFrame:
     """Load week-level team stats one season at a time instead of one batch
     call, so a missing file for the CURRENT season (nflverse doesn't publish
@@ -85,7 +113,8 @@ def _load_team_stats_resilient(seasons: list[int]) -> pd.DataFrame:
             f"Failed to load team stats for ALL of {seasons} -- this is not the expected "
             "current-season-only gap, something else is wrong (network/nflreadpy issue)."
         )
-    return pd.concat(frames, ignore_index=True)
+    combined = pd.concat(frames, ignore_index=True)
+    return _coerce_object_numeric_columns(combined)
 
 
 def main():
@@ -132,6 +161,7 @@ def main():
                 print(f"  Skipped {len(skipped)} season(s) for '{stat_type}': {skipped}")
             if frames:
                 df = pd.concat(frames, ignore_index=True)
+                df = _coerce_object_numeric_columns(df)
                 path = Path(str(config.RAW_PFR_ADVSTATS_PATH).format(stat_type=stat_type))
                 df.to_parquet(path, index=False)
                 print(f"  -> {df.shape[0]} rows saved to {path}")

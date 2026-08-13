@@ -89,6 +89,23 @@ each season's `load_team_stats()` call, and each season's
 every week, a one-off CDN blip shouldn't require someone to notice the
 failed run and manually re-trigger it.
 
+**Per-season loading has a dtype trap, and it's now handled.** Switching
+from one batched `load_team_stats(seasons=ALL)` call to loading one season
+at a time (needed for the current-season-404 fix above) introduced a real
+bug, caught from an actual failed live run: if a numeric column comes back
+with a slightly different pandas dtype in different seasons' files (e.g.
+nullable `Float64`/`object` in one season vs. plain `float64` in another --
+confirmed reproducible with `pd.concat`), `pd.concat` silently downgrades
+that column to `object` dtype across the WHOLE combined frame. That's
+invisible at fetch time and only surfaces much later as a cryptic
+`Pandas data cast to numpy dtype of object` error out of statsmodels when
+`25_live_weekly_scoring.py` tries to fit the logit model on it.
+`_coerce_object_numeric_columns()` re-coerces any object-dtype column back
+to numeric after concatenation, unless doing so would blow away more than
+half its values (which correctly identifies and leaves alone a genuine
+string column, e.g. team abbreviations). Applied to both the team-stats and
+PFR-advstats concatenation.
+
 `scripts/25_live_weekly_scoring.py` fits FINAL production models (logit +
 XGBoost + Naive Bayes) on every completed game in `training_set.csv`
 (no walk-forward split -- that's for validating the method, not for live
