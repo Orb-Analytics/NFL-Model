@@ -72,6 +72,19 @@ def load_extra_sources() -> dict[str, pd.DataFrame]:
 
 
 def fit_logit(X_train_const, y_train):
+    # Last-line-of-defense dtype check: if any column is still object dtype
+    # here despite the earlier coercion (e.g. something introduced object
+    # dtype AFTER curated_cols was coerced, such as sm.add_constant or the
+    # standardization arithmetic), fail with a message that names the
+    # actual offending column instead of statsmodels' generic "cast to
+    # numpy dtype of object" error, which gives no hint where to look.
+    bad_cols = [c for c in X_train_const.columns if X_train_const[c].dtype == object]
+    if bad_cols:
+        raise TypeError(
+            f"X_train_const has {len(bad_cols)} object-dtype column(s) right before fitting: "
+            f"{bad_cols}. This means dtype drift survived the earlier coercion in main() -- "
+            f"inspect these columns' source data directly."
+        )
     try:
         return sm.Logit(y_train, X_train_const).fit(disp=0)
     except np.linalg.LinAlgError:
@@ -141,6 +154,33 @@ def main():
     missing = [c for c in config.CURATED_FEATURES if c not in full.columns]
     if missing:
         print(f"WARNING: {len(missing)} curated features missing from the live feature set: {missing}")
+
+    # Defensive dtype check + coercion, applied right before any of these
+    # columns get used. build_features.py/feature_engineering.py runs a
+    # long chain of merges (extra PFR sources) and derived-column passes
+    # (add_matchup_features: 796 cols, add_differential_features: 1194
+    # cols) on top of raw data that's now fetched one season at a time --
+    # if dtype drift creeps in ANYWHERE upstream of a curated column, the
+    # arithmetic in those derived-feature passes can silently produce an
+    # object-dtype column (no error at the time) that only surfaces much
+    # later as statsmodels' cryptic "cast to numpy dtype of object" error.
+    # Coercing here, with diagnostics, means a real run either fixes itself
+    # or tells us exactly which column and why instead of failing blind.
+    obj_curated = [c for c in curated_cols if full[c].dtype == object]
+    if obj_curated:
+        print(f"\nWARNING: {len(obj_curated)} curated feature column(s) came through as object "
+              f"dtype (upstream dtype drift somewhere in build_features/feature_engineering or "
+              f"a merged source): {obj_curated}")
+        for c in obj_curated:
+            sample = full[c].dropna()
+            sample_types = sorted({type(v).__name__ for v in sample.head(20)})
+            before_nan = full[c].isna().sum()
+            full[c] = pd.to_numeric(full[c], errors="coerce")
+            after_nan = full[c].isna().sum()
+            print(f"  {c}: sample python types before coercion={sample_types}, "
+                  f"n_nan before={before_nan}, after={after_nan}"
+                  + (f"  !! {after_nan - before_nan} values weren't actually numeric -- "
+                     f"inspect this column's source." if after_nan > before_nan else ""))
 
     training = full[full["home_score"].notna() & full["away_score"].notna()].copy()
     training = training.dropna(subset=curated_cols + [config.TARGET_COLUMN])

@@ -116,6 +116,31 @@ Same caveat as `24`: that threshold came from a backtest decile boundary,
 not a nested walk-forward re-derivation -- update it if a more rigorous
 version gets built later.
 
+**Object-dtype defense, three layers deep.** A real live run hit
+statsmodels' cryptic `Pandas data cast to numpy dtype of object` error when
+fitting the logit model on all 3806 completed games. The per-season concat
+fix above addresses one known way a curated feature column can end up
+`object` dtype, but the SAME failure recurred identically after that fix
+shipped -- meaning that wasn't the whole story, and rather than keep
+guessing blind against data this sandbox can't reach (no network access to
+Novig or nflreadpy), `25_live_weekly_scoring.py` now defends at the actual
+point of use, in two more layers:
+
+1. Right after `curated_cols` is selected (before the training/scoring
+   split), any curated column still `object` dtype gets coerced back to
+   numeric via `pd.to_numeric`, with diagnostics printed (sample Python
+   types, NaN count before/after) so if a coercion introduces new NaNs
+   (meaning some values genuinely weren't numeric), that's visible instead
+   of silent.
+2. `fit_logit()` checks `X_train_const` for any remaining object-dtype
+   column immediately before calling `sm.Logit` and raises a `TypeError`
+   naming the exact column, instead of letting statsmodels' generic error
+   through.
+
+If the root cause isn't the per-season concat after all, the next real run
+will either self-heal (layer 1) or report exactly which column and why
+(layer 2) instead of the same unhelpful traceback.
+
 `scripts/26_write_predictions_json.py` formats the week's picks into the
 schema `orb-analytics-web` expects: `pick` is the picked team's own posted
 spread (e.g. `"Chiefs -3.5"`), `confidence` is the 3-model average
