@@ -141,6 +141,31 @@ If the root cause isn't the per-season concat after all, the next real run
 will either self-heal (layer 1) or report exactly which column and why
 (layer 2) instead of the same unhelpful traceback.
 
+**Update: found it.** The next real run reproduced the identical failure --
+and neither of the two `== object` checks above fired (no warning printed,
+`fit_logit()`'s guard didn't raise). That ruled out classic `object` dtype
+entirely. The actual cause: nflreadpy is built on polars, and polars'
+`.to_pandas()` conversion (used throughout, including inside
+`build_features.py`'s merges) can produce pandas NULLABLE extension dtypes
+-- `Float64`/`Int64`/`boolean` (capital letters, distinct from numpy's
+`float64`/`int64`). Pandas does NOT report these as `object` dtype, so
+every check above silently missed them, yet they still make statsmodels'
+whole-DataFrame-to-numpy-array conversion fail with the exact same cryptic
+error. Reproduced this precisely: built a column as `pd.array([1.5, 2.5],
+dtype='Float64')` and confirmed `dtype == object` is `False` for it, while
+`sm.Logit` still chokes on it unless explicitly cast.
+
+Both dtype checks (in `01_fetch_historical.py`'s
+`_coerce_object_numeric_columns()` and `25_live_weekly_scoring.py`'s
+curated-column normalization + `fit_logit()`'s guard) now force an
+UNCONDITIONAL `.astype("float64")` rather than gating on `== object` --
+detection doesn't need to be exhaustive if the fix always runs regardless
+of the column's current dtype. Tested against the exact real failure
+pattern: a `Float64`-dtype column that passes an `== object` check but
+still needs normalizing, confirmed fixed at all three points (fetch-time
+concat, main()'s curated-column normalization, and fit_logit()'s final
+safety net).
+
 `scripts/26_write_predictions_json.py` formats the week's picks into the
 schema `orb-analytics-web` expects: `pick` is the picked team's own posted
 spread (e.g. `"Chiefs -3.5"`), `confidence` is the 3-model average

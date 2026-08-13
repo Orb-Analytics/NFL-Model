@@ -56,28 +56,41 @@ def _with_retries(fn, description: str):
 def _coerce_object_numeric_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Fix a dtype trap introduced by loading one season at a time instead
     of one batched call: if a genuinely-numeric column comes back with a
-    slightly different pandas dtype in different seasons' files (e.g. a
-    nullable Float64/object column in one season vs. plain float64 in
-    another -- confirmed reproducible: pd.concat([Float64-with-nulls,
-    object-with-None]) silently produces `object` dtype), pd.concat falls
-    back to `object` dtype for that column across the WHOLE combined frame.
+    slightly different pandas dtype in different seasons' files, pd.concat
+    can silently downgrade that column across the WHOLE combined frame.
     That's silent and only surfaces much later, as a cryptic
     'Pandas data cast to numpy dtype of object' error out of statsmodels
-    when fitting a model on it.
+    when fitting a model on it. Handles TWO distinct cases, confirmed from
+    two separate real failures:
 
-    Re-coerces any object-dtype column back to numeric where doing so
-    doesn't blow away more than half its values (a genuine string column,
-    e.g. team abbreviations, would fail to convert almost entirely and is
-    correctly left alone).
+    1. Classic `object` dtype (e.g. pd.concat([Float64-with-nulls,
+       object-with-None]) silently produces `object`) -- re-coerced via
+       pd.to_numeric, unless doing so would blow away more than half the
+       column's values (a genuine string column, e.g. team abbreviations,
+       fails to convert almost entirely and is correctly left alone).
+    2. Pandas NULLABLE extension dtypes (Int64/Float64/boolean -- capital
+       letters, distinct from numpy's int64/float64), a known output of
+       nflreadpy's polars-backed `.to_pandas()` conversion. These are NOT
+       reported as `object` dtype by pandas -- confirmed from a second real
+       failure where an `== object` check found nothing, yet statsmodels
+       still failed converting the DataFrame block to one numpy array.
+       Any extension-dtype column is force-cast to float64; if that fails
+       (a genuine non-numeric extension dtype, e.g. a string/categorical
+       column), it's left alone.
     """
     for col in df.columns:
-        if df[col].dtype != object:
-            continue
-        already_nan = df[col].isna()
-        converted = pd.to_numeric(df[col], errors="coerce")
-        newly_nan = converted.isna() & ~already_nan
-        if len(df) == 0 or (newly_nan.sum() / len(df)) < 0.5:
-            df[col] = converted
+        dtype = df[col].dtype
+        if dtype == object:
+            already_nan = df[col].isna()
+            converted = pd.to_numeric(df[col], errors="coerce")
+            newly_nan = converted.isna() & ~already_nan
+            if len(df) == 0 or (newly_nan.sum() / len(df)) < 0.5:
+                df[col] = converted
+        elif pd.api.types.is_extension_array_dtype(dtype):
+            try:
+                df[col] = df[col].astype("float64")
+            except (ValueError, TypeError):
+                pass  # genuine non-numeric extension dtype -- leave alone
     return df
 
 
