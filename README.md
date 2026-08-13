@@ -76,6 +76,19 @@ seasons even though the current season's schedule is already loaded (that
 part always worked -- `load_schedules()` includes future/unplayed games by
 design, see `build_features.py`'s pipeline notes above).
 
+**`01_fetch_historical.py` also retries transient network errors.**
+nflreadpy's downloader wraps every download failure -- a genuine 404 (file
+doesn't exist yet) and a dropped connection to GitHub's release CDN (seen
+in practice: `RemoteDisconnected` during a real weekly run) -- in the same
+exception type, so `_with_retries()` distinguishes them by message text: a
+404/"Not Found" is treated as permanent and skipped immediately (retrying
+won't make an unpublished file appear), anything else is retried up to 3
+times with backoff before giving up. This applies to `load_schedules()`,
+each season's `load_team_stats()` call, and each season's
+`load_pfr_advstats()` call. Since this pipeline is meant to run unattended
+every week, a one-off CDN blip shouldn't require someone to notice the
+failed run and manually re-trigger it.
+
 `scripts/25_live_weekly_scoring.py` fits FINAL production models (logit +
 XGBoost + Naive Bayes) on every completed game in `training_set.csv`
 (no walk-forward split -- that's for validating the method, not for live

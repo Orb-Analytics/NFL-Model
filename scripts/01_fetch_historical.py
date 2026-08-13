@@ -10,6 +10,7 @@ Run:
 """
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -19,6 +20,38 @@ import nflreadpy as nfl
 
 import config
 
+# nflreadpy's downloader wraps EVERY download failure -- a genuine 404
+# (file doesn't exist yet, e.g. current season's stats before real games
+# are played) and a transient network blip (dropped connection, timeout on
+# GitHub's release CDN) -- in the same exception type and code path. There
+# is no reliable way to tell them apart by exception class, only by
+# message text. So: a message containing "404"/"Not Found" is treated as
+# permanent (don't waste time retrying, the file just isn't there yet);
+# anything else is treated as possibly transient and retried with backoff,
+# since this pipeline runs unattended weekly and shouldn't need a manual
+# re-run over what's usually just a flaky connection.
+_TRANSIENT_RETRY_ATTEMPTS = 3
+_TRANSIENT_RETRY_BACKOFF_SECONDS = 8
+
+
+def _with_retries(fn, description: str):
+    last_exc = None
+    for attempt in range(1, _TRANSIENT_RETRY_ATTEMPTS + 1):
+        try:
+            return fn()
+        except Exception as e:
+            msg = str(e)
+            if "404" in msg or "Not Found" in msg:
+                raise  # permanent -- caller decides how to handle (e.g. skip season)
+            last_exc = e
+            if attempt < _TRANSIENT_RETRY_ATTEMPTS:
+                wait = _TRANSIENT_RETRY_BACKOFF_SECONDS * attempt
+                print(f"  !! {description} failed (attempt {attempt}/{_TRANSIENT_RETRY_ATTEMPTS}, "
+                      f"looks transient: {e.__class__.__name__}: {e}) -- retrying in {wait}s...")
+                time.sleep(wait)
+    print(f"  !! {description} failed after {_TRANSIENT_RETRY_ATTEMPTS} attempts, giving up: {last_exc}")
+    raise last_exc
+
 
 def _load_team_stats_resilient(seasons: list[int]) -> pd.DataFrame:
     """Load week-level team stats one season at a time instead of one batch
@@ -26,18 +59,21 @@ def _load_team_stats_resilient(seasons: list[int]) -> pd.DataFrame:
     stats_team_week_{season}.parquet until that season's games start
     generating stats -- a 404 is expected/normal before Week 1, including
     during preseason) doesn't take down every other season's data with it.
-    Any season that fails to load is skipped with a warning; the caller
-    still gets every season that succeeded.
+    Any season that fails to load (permanently or after retries) is skipped
+    with a warning; the caller still gets every season that succeeded.
     """
     frames = []
     skipped = []
     for season in seasons:
         try:
-            df = nfl.load_team_stats(seasons=[season], summary_level="week").to_pandas()
+            df = _with_retries(
+                lambda s=season: nfl.load_team_stats(seasons=[s], summary_level="week").to_pandas(),
+                f"load_team_stats({season})",
+            )
             frames.append(df)
         except Exception as e:
             skipped.append(season)
-            print(f"  !! No team stats available yet for {season} ({e.__class__.__name__}: {e})")
+            print(f"  !! No team stats available for {season} ({e.__class__.__name__}: {e})")
 
     if skipped:
         print(f"  Skipped {len(skipped)} season(s) with no team-stats data yet: {skipped}")
@@ -56,7 +92,7 @@ def main():
     config.RAW_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"Fetching schedules for seasons: {config.SEASONS[0]}-{config.SEASONS[-1]}")
-    schedules = nfl.load_schedules(seasons=True).to_pandas()
+    schedules = _with_retries(lambda: nfl.load_schedules(seasons=True).to_pandas(), "load_schedules")
     schedules = schedules[schedules["season"].isin(config.SEASONS)]
     schedules.to_parquet(config.RAW_SCHEDULES_PATH, index=False)
     print(f"  -> {schedules.shape[0]} games saved to {config.RAW_SCHEDULES_PATH}")
@@ -81,13 +117,16 @@ def main():
             skipped = []
             for season in pfr_seasons:
                 try:
-                    df = nfl.load_pfr_advstats(
-                        seasons=[season], stat_type=stat_type, summary_level="week"
-                    ).to_pandas()
+                    df = _with_retries(
+                        lambda s=season: nfl.load_pfr_advstats(
+                            seasons=[s], stat_type=stat_type, summary_level="week"
+                        ).to_pandas(),
+                        f"load_pfr_advstats({stat_type}, {season})",
+                    )
                     frames.append(df)
                 except Exception as e:
                     skipped.append(season)
-                    print(f"  !! No PFR '{stat_type}' advstats yet for {season} "
+                    print(f"  !! No PFR '{stat_type}' advstats for {season} "
                           f"({e.__class__.__name__}: {e})")
             if skipped:
                 print(f"  Skipped {len(skipped)} season(s) for '{stat_type}': {skipped}")
