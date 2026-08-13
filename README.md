@@ -30,18 +30,37 @@ git add predictions.json && git commit -m "Weekly NFL predictions" && git push
 (default: Tuesday mornings) and pushes the result -- see that file for the
 schedule and how to trigger it manually from the Actions tab.
 
-**Before trusting this live**, two things need verification against a real
-slate (impossible to do until the season actually has games/odds posted):
+**Confirmed against a real live Novig NFL preseason slate (Aug 2026)**.
+Novig's spread-market format turned out to differ from the MLB-by-analogy
+guess this client shipped with originally:
 
-1. `python scripts/novig_client.py --debug` -- dumps every NFL market
-   Novig returns, unfiltered. `scripts/novig_client.py`'s spread-market
-   parsing regex (`_SPREAD_RE`) was written by analogy to the MLB client's
-   totals-market format, NOT confirmed against a real NFL response. Check
-   the debug output matches what the parser expects; fix the regex if not.
-2. Confirm Novig's team abbreviations match nflverse's for all 32 teams
-   (debug output will show mismatches as unmatched games) -- populate
-   `config.NOVIG_TEAM_ABBR_MAP` for any that don't, same fix the MLB client
-   needed for 3 teams.
+- Moneyline market description is the bare team abbreviation (e.g. `"PIT"`).
+- Totals market description is `"{AWAY} @ {HOME} t{NUMBER}"`, matching MLB.
+- **Spread market description is `"{HOME_ABBR} {home_team's_own_signed_spread}"`**
+  (e.g. `"JAX -7.5"`, `"NE +2.5"`) -- NOT `"AWAY @ HOME s-3.5"` as originally
+  guessed. Confirmed against every game in a real debug dump: the consensus
+  spread market (`is_consensus=True`) is always labeled with the home
+  team's own line. `spread_line` (nflverse convention, positive = home
+  favored) is one sign flip from that number.
+- Event `description` uses full team display names (e.g. "Cleveland Browns
+  @ Jacksonville Jaguars"), not abbreviations -- `novig_client.py` matches
+  events by full name via a hardcoded `NFL_TEAM_FULL_NAMES` table, not by
+  scanning for abbreviation substrings.
+- One team abbreviation mismatch found: Novig uses `"WSH"` for Washington;
+  nflverse uses `"WAS"`. Recorded in `config.NOVIG_TEAM_ABBR_MAP`, though
+  the full-name-based event matching sidesteps needing it for that lookup
+  specifically.
+- Some consensus markets can have one side's price still unposted
+  (`None`) -- `novig_client.py` skips those games rather than writing a
+  half-populated row; they'll show up as unmatched in the "Matched N of M"
+  summary it prints.
+
+`_extract_novig_spread()` and the full event-matching path were both
+tested against synthetic reconstructions of the real debug output (see
+git history / test output) before being trusted, since this sandbox has no
+network access to Novig itself. Still worth a final sanity check: run
+`python scripts/novig_client.py --debug` once games are close to kickoff
+and eyeball a few events to confirm nothing about the format has changed.
 
 `scripts/25_live_weekly_scoring.py` fits FINAL production models (logit +
 XGBoost + Naive Bayes) on every completed game in `training_set.csv`
@@ -92,7 +111,7 @@ NFL-Model/
     22_edge_only_breakdown.py      # no consensus gate -- bet the higher-edge side on every game, bucket by edge
     23_three_way_edge_aligned.py   # 3-way agreement AND the 3-model-average edge must point the same way
     24_final_combined_rule.py      # 3-way consensus + low-edge favorite filter, everything found so far combined
-    novig_client.py            # LIVE Novig GraphQL client (spread markets, NFL) -- see caveats above
+    novig_client.py            # LIVE Novig GraphQL client (spread markets, NFL) -- confirmed format, see above
     25_live_weekly_scoring.py  # fits final models on all history, scores the next unplayed week
     26_write_predictions_json.py  # live_picks.csv -> predictions.json for the site
     feature_utils.py           # shared get_predictor_columns()/evaluate()/odds+edge helpers, used by 04-14

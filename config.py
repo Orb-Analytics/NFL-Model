@@ -777,20 +777,20 @@ FINAL_COMBINED_RULE_METRICS_JSON = PROCESSED_DIR / "final_combined_rule_metrics.
 # happened. This section is for the live path: score whatever NFL games
 # haven't been played yet and publish picks the site can read.
 #
-# NOVIG_LEAGUE_FILTER must match however Novig tags NFL events in their
-# GraphQL schema (confirmed "MLB" works for the MLB model; "NFL" is the
-# expected analogous value but hasn't been confirmed against a live NFL
-# slate yet -- run novig_client.py in --debug mode once games are on the
-# board and check the printed event descriptions before trusting it).
+# NOVIG_LEAGUE_FILTER confirmed against a real live NFL preseason slate
+# (Aug 2026) -- "NFL" is correct.
 NOVIG_GRAPHQL_URL = "https://gql.novig.us/v1/graphql"
 NOVIG_LEAGUE_FILTER = "NFL"
 
 # Team abbreviation mapping: Novig's team codes are NOT guaranteed to match
 # nflverse's (the MLB client needed a _NOVIG_ABBR_MAP for exactly this
-# reason -- KAN/CWS/WAS all differed). Populate this once real NFL odds are
-# available and mismatches are visible in novig_client.py's --debug output.
-# Empty by default -- most NFL team codes are expected to match directly.
-NOVIG_TEAM_ABBR_MAP = {}
+# reason -- KAN/CWS/WAS all differed). Confirmed against a real debug dump:
+# every NFL team code matches nflverse's except Washington, where Novig
+# uses "WSH" and nflverse uses "WAS". novig_client.py's event matching is
+# done by full team name (not abbreviation) so this map isn't load-bearing
+# for that path today, but it's kept here as the documented source of
+# truth in case an abbreviation-keyed lookup is added later.
+NOVIG_TEAM_ABBR_MAP = {"WSH": "WAS"}
 
 LIVE_NOVIG_ODDS_CSV = PROCESSED_DIR / "live_novig_odds.csv"
 LIVE_SCORING_INPUT_CSV = PROCESSED_DIR / "live_scoring_input.csv"

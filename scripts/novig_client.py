@@ -5,23 +5,37 @@ public GraphQL endpoint (no API key required) filtered to
 `game: {league: {_eq: "MLB"}}` and parses moneyline + totals markets from
 the response. This does the same thing for NFL spread markets instead.
 
-IMPORTANT -- this needs to be verified against a live response before it's
-trusted: the MLB client's market-parsing regexes were built by inspecting
-real Novig responses (moneyline markets are described by the team
-abbreviation alone, e.g. "MIL"; totals markets are described like
-"TOR @ MIL t7.5"). Nobody has inspected a real Novig NFL response yet, so
-the spread-market regex below (`_SPREAD_RE`) is a best guess by analogy to
-the totals pattern, not a confirmed format. Two things to check the first
-time this runs against a live NFL slate:
+CONFIRMED against a real `--debug` dump of live Novig NFL preseason odds
+(Aug 2026). The actual formats:
 
-  1. Run with --debug: it prints every market description for every NFL
-     event, unfiltered, so you can see the actual spread market naming
-     convention and fix `_SPREAD_RE` / `_extract_novig_spread()` if it
-     doesn't match what's really there.
-  2. Check whether Novig's team abbreviations match nflverse's for every
-     NFL team. The MLB client needed `_NOVIG_ABBR_MAP` for exactly this
-     (KAN/CWS/WAS didn't match) -- populate `config.NOVIG_TEAM_ABBR_MAP`
-     the same way if any NFL mismatches show up in --debug output.
+  - Moneyline market: description is the bare team abbreviation, e.g. "PIT".
+    Not used here.
+  - Totals market: "{AWAY_ABBR} @ {HOME_ABBR} t{NUMBER}", e.g.
+    "GB @ PIT t37.5". Not used here.
+  - Spread market (what we need): NOT "AWAY @ HOME s-3.5" as originally
+    guessed. It's "{HOME_ABBR} {home_team's_own_signed_spread}", e.g.
+    "JAX -7.5" (JAX favored by 7.5 as the home team), "NE +2.5" (NE
+    underdog by 2.5 as the home team). Checked against every game in a real
+    debug dump -- the consensus spread market (is_consensus=True) is
+    *always* labeled with the home team's own line, never the away team's.
+    Outcomes list both sides by their own signed number, e.g. for
+    "JAX -7.5": outcomes=[JAX -7.5=0.53, CLE +7.5=0.54].
+  - Some consensus markets have one side's price still `None` (not yet
+    posted) -- those games are skipped rather than crashed on.
+  - Event `description` uses full team display names, e.g. "Cleveland
+    Browns @ Jacksonville Jaguars" -- NOT abbreviations. Event matching
+    below is done on full names via NFL_TEAM_FULL_NAMES, not by scanning
+    for abbreviation substrings (which would rarely match real display
+    names).
+  - Team abbreviation mismatch found: Novig uses "WSH" for Washington;
+    nflverse uses "WAS". Recorded in config.NOVIG_TEAM_ABBR_MAP, though the
+    full-name-based event matching below sidesteps needing it for matching
+    purposes -- it's kept for any future abbreviation-keyed lookups.
+
+Since spread_line follows nflverse's convention (positive = home favored)
+and Novig's consensus market reports the home team's own signed spread
+(negative = home favored), the conversion is a single sign flip:
+    spread_line = -1 * (number in the consensus market description)
 
 Output shape (stable regardless of how the parsing internals evolve):
     game_id, home_team, away_team, spread_line, home_spread_odds,
@@ -75,13 +89,29 @@ query {
 }
 """ % config.NOVIG_LEAGUE_FILTER
 
-_TEAM_RE = re.compile(r'^[A-Z]{2,3}$')
-# Best-guess pattern for a spread market, by analogy to the MLB totals
-# market's "AWAY @ HOME t7.5" format -- "s" for spread instead of "t" for
-# total. UNCONFIRMED against a real NFL response -- see this file's
-# docstring. If --debug shows a different pattern, fix this regex (and
-# _extract_novig_spread below) to match it.
-_SPREAD_RE = re.compile(r'^([A-Z]{2,3}) @ ([A-Z]{2,3}) s([+-]?\d+\.?\d*)$')
+# Confirmed spread-market format: "{TEAM_ABBR} {signed_number}", e.g.
+# "JAX -7.5", "NE +2.5". Requires the signed number so it doesn't also match
+# the bare-abbreviation moneyline market description (e.g. "PIT").
+_SPREAD_RE = re.compile(r'^([A-Z]{2,3}) ([+-]\d+(?:\.\d+)?)$')
+
+# nflverse team abbreviation -> full display name, used to match Novig's
+# event `description` field (which uses full names, e.g. "Cleveland Browns
+# @ Jacksonville Jaguars") against our schedule (which only has
+# abbreviations). Hardcoded rather than fetched at runtime so matching
+# doesn't depend on an extra network call succeeding.
+NFL_TEAM_FULL_NAMES = {
+    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+    "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+    "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+    "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+    "KC": "Kansas City Chiefs", "LA": "Los Angeles Rams", "LAR": "Los Angeles Rams",
+    "LAC": "Los Angeles Chargers", "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins",
+    "MIN": "Minnesota Vikings", "NE": "New England Patriots", "NO": "New Orleans Saints",
+    "NYG": "New York Giants", "NYJ": "New York Jets", "PHI": "Philadelphia Eagles",
+    "PIT": "Pittsburgh Steelers", "SEA": "Seattle Seahawks", "SF": "San Francisco 49ers",
+    "TB": "Tampa Bay Buccaneers", "TEN": "Tennessee Titans", "WAS": "Washington Commanders",
+}
 
 
 def _price_to_american(price):
@@ -115,8 +145,8 @@ def fetch_raw_events() -> list[dict]:
 
 def debug_dump(events: list[dict]) -> None:
     """Print every market description for every event, completely
-    unfiltered -- run this FIRST against a live NFL slate to confirm (or
-    fix) the spread-market parsing pattern before trusting fetch_current_lines()."""
+    unfiltered -- useful if Novig ever changes its market naming and this
+    client needs re-verifying."""
     print(f"{len(events)} {config.NOVIG_LEAGUE_FILTER} events returned.\n")
     for ev in events:
         print(f"--- {ev.get('description')} (id={ev.get('id')}, "
@@ -129,10 +159,17 @@ def debug_dump(events: list[dict]) -> None:
         print()
 
 
-def _extract_novig_spread(markets: list[dict], home_abbr: str, away_abbr: str) -> dict:
+def _extract_novig_spread(markets: list[dict]) -> dict:
     """Pulls the consensus spread line + both sides' American odds from one
-    event's markets. Returns {} if nothing matched (unrecognized format --
-    run --debug to see why)."""
+    event's markets. Returns {} if nothing matched, or if either side's
+    price isn't posted yet.
+
+    The consensus spread market is always labeled with the HOME team's own
+    signed spread (e.g. "JAX -7.5"), so once we find it we don't need to
+    know which abbreviation Novig uses for which side ahead of time: the
+    outcome sharing the market's own team code is home's price, the other
+    outcome is away's price.
+    """
     for mkt in markets:
         if not mkt.get("is_consensus"):
             continue
@@ -141,26 +178,36 @@ def _extract_novig_spread(markets: list[dict], home_abbr: str, away_abbr: str) -
         if not m:
             continue
 
+        mkt_team, mkt_num = m.group(1), m.group(2)
         outcomes = mkt.get("outcomes") or []
-        prices = {}
+        home_price = None
+        away_price = None
         for oc in outcomes:
             od = (oc.get("description") or "").strip()
             p = oc.get("available")
-            od = config.NOVIG_TEAM_ABBR_MAP.get(od, od)
-            if _TEAM_RE.match(od) and p is not None:
-                prices[od] = _price_to_american(p)
+            if od.startswith(mkt_team + " "):
+                home_price = p
+            else:
+                away_price = p
 
-        if home_abbr in prices and away_abbr in prices:
-            spread_num = float(m.group(3))
-            # Normalize to nflverse convention: spread_line = points the
-            # HOME team is favored by (positive = home favored). Novig's
-            # sign convention for this market is UNCONFIRMED -- verify
-            # against --debug output and flip the sign here if backwards.
-            return {
-                "spread_line": spread_num,
-                "home_spread_odds": prices[home_abbr],
-                "away_spread_odds": prices[away_abbr],
-            }
+        if home_price is None or away_price is None:
+            # One side not posted yet -- skip rather than write a
+            # half-populated row.
+            continue
+
+        home_odds = _price_to_american(home_price)
+        away_odds = _price_to_american(away_price)
+        if home_odds is None or away_odds is None:
+            continue
+
+        return {
+            # spread_line follows nflverse's convention (positive = home
+            # favored); the market reports home's own signed spread
+            # (negative = home favored), so flip the sign once.
+            "spread_line": -float(mkt_num),
+            "home_spread_odds": home_odds,
+            "away_spread_odds": away_odds,
+        }
     return {}
 
 
@@ -178,6 +225,8 @@ def fetch_current_lines(schedule_df: pd.DataFrame, debug: bool = False) -> pd.Da
     if debug:
         debug_dump(events)
 
+    # Key events by their full-name description, e.g. "Cleveland Browns @
+    # Jacksonville Jaguars" -- confirmed real format, not abbreviations.
     event_lookup = {}
     for ev in events:
         desc = ev.get("description", "")
@@ -190,6 +239,8 @@ def fetch_current_lines(schedule_df: pd.DataFrame, debug: bool = False) -> pd.Da
     for _, g in schedule_df.iterrows():
         home_abbr = str(g["home_team"]).strip()
         away_abbr = str(g["away_team"]).strip()
+        home_full = NFL_TEAM_FULL_NAMES.get(home_abbr, home_abbr)
+        away_full = NFL_TEAM_FULL_NAMES.get(away_abbr, away_abbr)
 
         row = {
             "game_id": g["game_id"],
@@ -200,21 +251,19 @@ def fetch_current_lines(schedule_df: pd.DataFrame, debug: bool = False) -> pd.Da
             "away_spread_odds": None,
         }
 
-        # Novig events are keyed by display name in the MLB client, but this
-        # schedule only has abbreviations -- try the abbreviation-based key
-        # first (works if Novig's `description` field uses team codes for
-        # NFL the way it does for some markets), falling back to a scan for
-        # any event description containing both abbreviations.
-        novig_key = f"{away_abbr} @ {home_abbr}"
+        novig_key = f"{away_full} @ {home_full}"
         ev = event_lookup.get(novig_key)
         if ev is None:
+            # Fallback in case Novig's naming drifts slightly (extra
+            # whitespace, punctuation, etc.) -- scan for both full names
+            # appearing in the description rather than an exact match.
             for desc, candidate in event_lookup.items():
-                if away_abbr in desc and home_abbr in desc:
+                if away_full in desc and home_full in desc:
                     ev = candidate
                     break
 
         if ev and ev.get("markets"):
-            odds = _extract_novig_spread(ev["markets"], home_abbr, away_abbr)
+            odds = _extract_novig_spread(ev["markets"])
             if odds:
                 row.update(odds)
                 matched += 1
@@ -226,7 +275,8 @@ def fetch_current_lines(schedule_df: pd.DataFrame, debug: bool = False) -> pd.Da
     print(f"Matched {matched} of {len(df)} scheduled games to Novig odds.")
     if matched < len(df):
         print("Unmatched games will have null spread_line/odds -- run with --debug to inspect "
-              "why (event description format may not match what this client expects).")
+              "why (event description format may not match what this client expects, or Novig "
+              "hasn't posted lines for those games yet).")
     return df
 
 
