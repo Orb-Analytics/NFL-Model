@@ -14,9 +14,42 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+import pandas as pd
 import nflreadpy as nfl
 
 import config
+
+
+def _load_team_stats_resilient(seasons: list[int]) -> pd.DataFrame:
+    """Load week-level team stats one season at a time instead of one batch
+    call, so a missing file for the CURRENT season (nflverse doesn't publish
+    stats_team_week_{season}.parquet until that season's games start
+    generating stats -- a 404 is expected/normal before Week 1, including
+    during preseason) doesn't take down every other season's data with it.
+    Any season that fails to load is skipped with a warning; the caller
+    still gets every season that succeeded.
+    """
+    frames = []
+    skipped = []
+    for season in seasons:
+        try:
+            df = nfl.load_team_stats(seasons=[season], summary_level="week").to_pandas()
+            frames.append(df)
+        except Exception as e:
+            skipped.append(season)
+            print(f"  !! No team stats available yet for {season} ({e.__class__.__name__}: {e})")
+
+    if skipped:
+        print(f"  Skipped {len(skipped)} season(s) with no team-stats data yet: {skipped}")
+        print("     (normal for the current season before real games have been played -- "
+              "live scoring only needs completed games' stats, and build_features.py's "
+              "rolling/EWMA features already handle upcoming games having no own-week stats.)")
+    if not frames:
+        raise RuntimeError(
+            f"Failed to load team stats for ALL of {seasons} -- this is not the expected "
+            "current-season-only gap, something else is wrong (network/nflreadpy issue)."
+        )
+    return pd.concat(frames, ignore_index=True)
 
 
 def main():
@@ -29,7 +62,7 @@ def main():
     print(f"  -> {schedules.shape[0]} games saved to {config.RAW_SCHEDULES_PATH}")
 
     print("Fetching team stats (week-level)...")
-    team_stats = nfl.load_team_stats(seasons=config.SEASONS, summary_level="week").to_pandas()
+    team_stats = _load_team_stats_resilient(config.SEASONS)
     team_stats.to_parquet(config.RAW_TEAM_STATS_PATH, index=False)
     print(f"  -> {team_stats.shape[0]} team-weeks saved to {config.RAW_TEAM_STATS_PATH}")
 
@@ -39,18 +72,33 @@ def main():
             print(f"\nSkipping PFR advstats -- none of {config.SEASONS} are >= {config.PFR_ADVSTATS_MIN_SEASON}.")
         for stat_type in config.PFR_ADVSTATS_TYPES:
             print(f"Fetching PFR advanced stats ({stat_type})...")
-            try:
-                df = nfl.load_pfr_advstats(
-                    seasons=pfr_seasons, stat_type=stat_type, summary_level="week"
-                ).to_pandas()
+            # Same per-season resilience as team stats: a single batched call
+            # with pfr_seasons would drop EVERY season's data for this
+            # stat_type if just the current season's file doesn't exist yet
+            # (normal before real games have been played). Load one season
+            # at a time so a current-season 404 only costs that one season.
+            frames = []
+            skipped = []
+            for season in pfr_seasons:
+                try:
+                    df = nfl.load_pfr_advstats(
+                        seasons=[season], stat_type=stat_type, summary_level="week"
+                    ).to_pandas()
+                    frames.append(df)
+                except Exception as e:
+                    skipped.append(season)
+                    print(f"  !! No PFR '{stat_type}' advstats yet for {season} "
+                          f"({e.__class__.__name__}: {e})")
+            if skipped:
+                print(f"  Skipped {len(skipped)} season(s) for '{stat_type}': {skipped}")
+            if frames:
+                df = pd.concat(frames, ignore_index=True)
                 path = Path(str(config.RAW_PFR_ADVSTATS_PATH).format(stat_type=stat_type))
                 df.to_parquet(path, index=False)
                 print(f"  -> {df.shape[0]} rows saved to {path}")
                 print(f"  -> columns: {list(df.columns)}")
-            except Exception as e:
-                print(f"  !! Failed to fetch PFR advstats for '{stat_type}': {e}")
-                print("     Pipeline will continue without this source -- check nflreadpy's")
-                print("     load_pfr_advstats() signature if this persists.")
+            else:
+                print(f"  !! No seasons succeeded for '{stat_type}' -- skipping this source entirely.")
 
     print("\nColumn check (verify these match what build_features.py expects):")
     print("schedules columns:", list(schedules.columns))

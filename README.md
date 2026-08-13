@@ -62,6 +62,20 @@ network access to Novig itself. Still worth a final sanity check: run
 `python scripts/novig_client.py --debug` once games are close to kickoff
 and eyeball a few events to confirm nothing about the format has changed.
 
+**`01_fetch_historical.py` handles the current season having no stats yet.**
+nflverse doesn't publish `stats_team_week_{season}.parquet` (or the PFR
+advstats equivalents) until that season's games have actually generated
+stats -- a 404 for the current season is expected, not an error, right up
+until real games are played. The fetch functions now load team stats and
+PFR advstats one season at a time and skip only the seasons that 404
+(printing which ones), instead of one batched call that would previously
+crash the whole run (or silently drop every season, for PFR advstats) the
+moment the current season's file didn't exist. This matters specifically
+during preseason, when `predictions.json` needs to run off completed prior
+seasons even though the current season's schedule is already loaded (that
+part always worked -- `load_schedules()` includes future/unplayed games by
+design, see `build_features.py`'s pipeline notes above).
+
 `scripts/25_live_weekly_scoring.py` fits FINAL production models (logit +
 XGBoost + Naive Bayes) on every completed game in `training_set.csv`
 (no walk-forward split -- that's for validating the method, not for live
