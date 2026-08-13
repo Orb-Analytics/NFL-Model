@@ -1,7 +1,52 @@
 {
   "model": "NFL",
-  "generated_at": null,
+  "generated_at": "2026-08-13T02:49:54Z",
   "version": "v1.0-3way-consensus-low-edge-favorite",
-  "picks": [],
-  "note": "Placeholder. This file is overwritten by scripts/26_write_predictions_json.py once the live scoring pipeline has been run against a real slate -- see README.md 'Live scoring & site integration'."
+  "picks": [
+    {
+      "game_id": "2026_01_TB_CIN",
+      "home_team": "Cincinnati Bengals",
+      "away_team": "Tampa Bay Buccaneers",
+      "pick": "Buccaneers +3.5",
+      "confidence": 0.5485,
+      "line": -115,
+      "notes": "3-way consensus, edge +0.5% (underdog)"
+    },
+    {
+      "game_id": "2026_01_CLE_JAX",
+      "home_team": "Jacksonville Jaguars",
+      "away_team": "Cleveland Browns",
+      "pick": "Browns +7.5",
+      "confidence": 0.544,
+      "line": -117,
+      "notes": "3-way consensus, edge +0.2% (underdog)"
+    },
+    {
+      "game_id": "2026_01_DEN_KC",
+      "home_team": "Kansas City Chiefs",
+      "away_team": "Denver Broncos",
+      "pick": "Broncos +2.5",
+      "confidence": 0.5438,
+      "line": -111,
+      "notes": "3-way consensus, edge +0.6% (underdog)"
+    },
+    {
+      "game_id": "2026_01_WAS_PHI",
+      "home_team": "Philadelphia Eagles",
+      "away_team": "Washington Commanders",
+      "pick": "Commanders +5.5",
+      "confidence": 0.5481,
+      "line": -127,
+      "notes": "3-way consensus, edge -0.4% (underdog)"
+    },
+    {
+      "game_id": "2026_01_ATL_PIT",
+      "home_team": "Pittsburgh Steelers",
+      "away_team": "Atlanta Falcons",
+      "pick": "Falcons +3.5",
+      "confidence": 0.5564,
+      "line": -174,
+      "notes": "3-way consensus, edge -2.8% (underdog)"
+    }
+  ]
 }
