@@ -1,0 +1,7 @@
+{
+  "model": "NFL",
+  "generated_at": null,
+  "version": "v1.0-3way-consensus-low-edge-favorite",
+  "picks": [],
+  "note": "Placeholder. This file is overwritten by scripts/26_write_predictions_json.py once the live scoring pipeline has been run against a real slate -- see README.md 'Live scoring & site integration'."
+}

@@ -1,0 +1,15 @@
+# Raw nflreadpy caches -- re-fetched fresh every CI run, no need to track.
+data/raw/*.parquet
+
+# Large snapshot file, not needed for the live pipeline.
+data/processed/training_set_snapshot.xlsx
+
+# Everything else in data/processed IS tracked deliberately (training_set.csv,
+# live_scoring_input.csv, live_picks.csv, live_novig_odds.csv, and every
+# backtest output) -- mirrors MLB-Model committing training-set/training_set.csv
+# so history is versioned in git, not just regenerated silently.
+
+.env
+__pycache__/
+*.pyc
+.DS_Store

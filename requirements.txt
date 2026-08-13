@@ -1,0 +1,12 @@
+nflreadpy
+pandas
+polars
+pyarrow
+openpyxl
+gspread
+requests
+python-dotenv
+scipy
+xgboost
+scikit-learn
+statsmodels
