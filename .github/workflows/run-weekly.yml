@@ -46,5 +46,20 @@ jobs:
       run: |
         git config --global user.name 'github-actions[bot]'
         git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-        git add -A predictions.json data/processed/live_scoring_input.csv data/processed/live_picks.csv data/processed/live_novig_odds.csv
+        # `git add` with explicit literal paths fails the whole step ("did
+        # not match any files") if even ONE of them doesn't exist -- which
+        # happened for real (live_novig_odds.csv wasn't written by
+        # 25_live_weekly_scoring.py, now fixed, but ANY script exiting
+        # early -- e.g. "no unplayed games", "no Novig odds matched" --
+        # will still legitimately skip writing some of these files most
+        # weeks). Add only what actually exists so a partial/early-return
+        # run still commits whatever it did produce instead of crashing
+        # this step entirely.
+        for f in predictions.json data/processed/live_scoring_input.csv data/processed/live_picks.csv data/processed/live_novig_odds.csv; do
+          if [ -f "$f" ]; then
+            git add "$f"
+          else
+            echo "Skipping $f -- not written this run."
+          fi
+        done
         git diff --cached --quiet || (git commit -m "Weekly NFL predictions: $(date -u +%Y-%m-%d)" && git push)

@@ -166,6 +166,25 @@ still needs normalizing, confirmed fixed at all three points (fetch-time
 concat, main()'s curated-column normalization, and fit_logit()'s final
 safety net).
 
+**`live_novig_odds.csv` is now actually written, and the commit step is
+resilient to missing files.** The model fit itself succeeded on the next
+real run (confirming the dtype fixes above worked), but the workflow's
+final "Commit and push changes" step failed: `git add` was given four
+literal file paths, and `data/processed/live_novig_odds.csv` had never
+actually been written -- `25_live_weekly_scoring.py` calls
+`fetch_current_lines()` directly and only used the result in memory; that
+CSV was previously only ever written when running `novig_client.py`
+standalone with `--out`. `git add` with explicit literal paths fails the
+whole step ("did not match any files") if even one is missing. Fixed both
+sides: `25_live_weekly_scoring.py` now writes the raw Novig fetch (every
+game, matched or not, with null odds for unmatched ones -- a useful weekly
+audit trail) to `config.LIVE_NOVIG_ODDS_CSV` immediately after fetching,
+before the early-return path for a zero-match week; and
+`run-weekly.yml`'s commit step now loops over the expected files and adds
+only the ones that exist, so a script legitimately exiting early some
+week (no unplayed games, no Novig odds posted yet) still commits whatever
+it did produce instead of crashing the whole step.
+
 `scripts/26_write_predictions_json.py` formats the week's picks into the
 schema `orb-analytics-web` expects: `pick` is the picked team's own posted
 spread (e.g. `"Chiefs -3.5"`), `confidence` is the 3-model average

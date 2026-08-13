@@ -131,8 +131,23 @@ def main():
     # column derived from spread_line reflect the real price being bet,
     # not whatever (possibly stale/placeholder) odds nflreadpy's schedules
     # pull happens to carry for a future game.
-    novig_odds = fetch_current_lines(upcoming[["game_id", "home_team", "away_team"]])
-    novig_odds = novig_odds.dropna(subset=["spread_line"])
+    novig_odds_raw = fetch_current_lines(upcoming[["game_id", "home_team", "away_team"]])
+    # Write the raw fetch (including unmatched games with null odds) to
+    # disk immediately -- this is the file the weekly workflow commits as
+    # an audit trail of what was actually bet against. Previously this was
+    # only ever written when running novig_client.py standalone with
+    # --out; calling fetch_current_lines() directly from here (as this
+    # script does) never persisted it, so the workflow's `git add` step
+    # for data/processed/live_novig_odds.csv failed every single run with
+    # "did not match any files" since the file never existed. Writing it
+    # here, and BEFORE the early-return-on-zero-matches path below, so the
+    # file always exists once this script gets this far regardless of
+    # match rate.
+    config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    novig_odds_raw.to_csv(config.LIVE_NOVIG_ODDS_CSV, index=False)
+    print(f"  -> {config.LIVE_NOVIG_ODDS_CSV}")
+
+    novig_odds = novig_odds_raw.dropna(subset=["spread_line"])
     n_matched = len(novig_odds)
     print(f"Novig matched odds for {n_matched} of {len(upcoming)} games in week {next_week}.")
     if n_matched == 0:
