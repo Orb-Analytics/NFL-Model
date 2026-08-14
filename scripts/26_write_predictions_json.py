@@ -1,21 +1,50 @@
 """
 Write predictions.json from this week's picks (25_live_weekly_scoring.py's
-output), matching the exact schema orb-analytics-web expects
-(Orb-Analytics/orb-analytics-web README, "Predictions Integration"):
+output).
+
+IMPORTANT: this matches orb-analytics-web's REAL, LIVE schema -- confirmed
+by reading Orb-Analytics/MLB-Model/main/predictions.json directly and the
+actual JS in orb-analytics-web/predictions.html that consumes it -- NOT
+the schema documented in orb-analytics-web's README, which turned out to
+be stale/aspirational (no `has_pick` field, full team names instead of
+abbreviations, `edge` as a decimal instead of a percentage). Building
+against the README's example would have produced a file the real site code
+can't actually render. The real MLB shape:
+
+    {
+      "model": "MLB",
+      "generated_at": "2026-07-21T04:44:09.317689+00:00",
+      "version": "v2.1",
+      "picks": [
+        {
+          "home_team": "PHI", "away_team": "LAD", "pick": "LAD",
+          "has_pick": true, "confidence": 0.4678,
+          "home_odds": -127, "away_odds": 125, "line": 125,
+          "edge": 2.34, "notes": "XGBoost edge: +2.34%"
+        }
+      ]
+    }
+
+This writer produces the NFL equivalent, with one addition the site's JS
+also expects: a `spread` field. MLB's single "line" field does double duty
+as both the display number AND the American-odds input to the page's
+implied-probability formula, because a moneyline number works fine as
+both. A spread sport doesn't have that luxury -- the spread itself (e.g.
+-3.5, what a bettor cares about) and that side's American odds at that
+spread (e.g. -110, what implied probability is actually computed from) are
+two different numbers. `line` here is the picked side's own odds (parallel
+to MLB's "line"); `spread` is the picked side's own spread number.
 
     {
       "model": "NFL",
-      "generated_at": "2026-07-15T08:00:00Z",
+      "generated_at": "2026-09-09T13:00:00Z",
       "version": "v1.0-3way-consensus-low-edge-favorite",
       "picks": [
         {
-          "game_id": "...",
-          "home_team": "Kansas City Chiefs",
-          "away_team": "Buffalo Bills",
-          "pick": "Chiefs -3.5",
-          "confidence": 0.58,
-          "line": -110,
-          "notes": "..."
+          "game_id": "...", "home_team": "KC", "away_team": "BUF", "pick": "KC",
+          "has_pick": true, "confidence": 0.58, "spread": -3.5,
+          "home_odds": -110, "away_odds": -110, "line": -110,
+          "edge": 0.34, "notes": "3-way consensus, edge +0.34% (favorite)"
         }
       ]
     }
@@ -25,12 +54,14 @@ Orb-Analytics/NFL-Model's main branch -- committing an updated
 predictions.json to main is the entire integration; no deploy or API call
 needed on the site side.
 
-"pick" = the picked team's short/nickname + their own posted spread
-(favorite always negative, matching standard sportsbook display -- NOT
-nflverse's spread_line convention directly, which is home-perspective and
-needs a sign flip for away picks; see _picked_team_spread_display below).
-"confidence" = the 3-model average probability for the picked side (same
-avg_prob_3 used to compute edge in 25).
+"home_team"/"away_team"/"pick" are nflverse's own team abbreviations
+(matching MLB's real behavior of using abbreviations, not full names --
+the site's JS checks `pick.pick === pick.home_team` for exact string
+equality, so these must match). "confidence" = the 3-model average
+probability for the picked side (same avg_prob_3 used to compute edge in
+25). "edge" is written as a PERCENTAGE NUMBER (2.34 = 2.34%), matching
+MLB's real convention -- our internal edge is a decimal fraction (e.g.
+0.0034), so it's multiplied by 100 here.
 
 Run:
     python scripts/26_write_predictions_json.py
@@ -48,45 +79,16 @@ import pandas as pd
 
 import config
 
-try:
-    import nflreadpy as nfl
-except ImportError:
-    nfl = None
-
-
-def _load_team_names() -> dict:
-    """abbr -> {"full": ..., "short": ...}. Falls back to using the
-    abbreviation itself for both if nflreadpy's team table isn't available
-    or doesn't have the expected columns -- this should never hard-fail the
-    whole run just because a display name lookup didn't work."""
-    if nfl is None:
-        return {}
-    try:
-        teams = nfl.load_teams().to_pandas()
-    except Exception as e:
-        print(f"Could not load team names from nflreadpy ({e}) -- falling back to abbreviations.")
-        return {}
-
-    abbr_col = next((c for c in ["team_abbr", "abbr", "team"] if c in teams.columns), None)
-    full_col = next((c for c in ["team_name", "full_name", "display_name"] if c in teams.columns), None)
-    short_col = next((c for c in ["team_nick", "nickname", "short_name"] if c in teams.columns), None)
-    if not abbr_col:
-        return {}
-
-    mapping = {}
-    for _, row in teams.iterrows():
-        abbr = row[abbr_col]
-        full = row[full_col] if full_col else abbr
-        short = row[short_col] if short_col else full
-        mapping[abbr] = {"full": full, "short": short}
-    return mapping
-
 
 def _picked_team_spread_display(spread_line: float, picked_home: bool) -> float:
     """Convert nflverse's home-perspective spread_line (positive = home
     favored) to the PICKED team's own posted spread (favorite always
     negative, matching standard sportsbook display)."""
     return -spread_line if picked_home else spread_line
+
+
+def _int_or_none(val):
+    return int(val) if pd.notna(val) else None
 
 
 def main():
@@ -98,35 +100,38 @@ def main():
         print("No picks this week -- writing predictions.json with an empty picks list "
               "(so the site correctly shows 'no picks' rather than stale data).")
 
-    team_names = _load_team_names()
+    has_home_away_odds = "home_spread_odds" in picks_df.columns and "away_spread_odds" in picks_df.columns
+    if not has_home_away_odds:
+        print("WARNING: live_picks.csv doesn't have home_spread_odds/away_spread_odds columns -- "
+              "writing home_odds/away_odds as null (only the picked side's own odds, in 'line', "
+              "will be populated). Check 25_live_weekly_scoring.py's scoring DataFrame if this is "
+              "unexpected -- these columns should carry through from schedules via build_full_dataset.")
 
     picks = []
     for _, row in picks_df.iterrows():
         picked_home = row["predicted_home_cover"] == 1
         picked_abbr = row["home_team"] if picked_home else row["away_team"]
-        opp_abbr = row["away_team"] if picked_home else row["home_team"]
-
-        home_display = team_names.get(row["home_team"], {}).get("full", row["home_team"])
-        away_display = team_names.get(row["away_team"], {}).get("full", row["away_team"])
-        picked_short = team_names.get(picked_abbr, {}).get("short", picked_abbr)
 
         spread_display = _picked_team_spread_display(row["spread_line"], picked_home)
-        pick_str = f"{picked_short} {spread_display:+.1f}"
-
         confidence = float(row["avg_prob_3"]) if picked_home else float(1 - row["avg_prob_3"])
 
         notes = (
-            f"3-way consensus, edge {row['edge']*100:+.1f}% "
+            f"3-way consensus, edge {row['edge']*100:+.2f}% "
             f"({'favorite' if row['picked_favorite'] else 'underdog'})"
         )
 
         picks.append({
             "game_id": str(row["game_id"]),
-            "home_team": home_display,
-            "away_team": away_display,
-            "pick": pick_str,
+            "home_team": row["home_team"],
+            "away_team": row["away_team"],
+            "pick": picked_abbr,
+            "has_pick": True,
             "confidence": round(confidence, 4),
-            "line": int(row["picked_odds"]) if pd.notna(row["picked_odds"]) else None,
+            "spread": round(float(spread_display), 1),
+            "home_odds": _int_or_none(row["home_spread_odds"]) if has_home_away_odds else None,
+            "away_odds": _int_or_none(row["away_spread_odds"]) if has_home_away_odds else None,
+            "line": _int_or_none(row["picked_odds"]),
+            "edge": round(float(row["edge"]) * 100, 2),
             "notes": notes,
         })
 

@@ -185,10 +185,31 @@ only the ones that exist, so a script legitimately exiting early some
 week (no unplayed games, no Novig odds posted yet) still commits whatever
 it did produce instead of crashing the whole step.
 
-`scripts/26_write_predictions_json.py` formats the week's picks into the
-schema `orb-analytics-web` expects: `pick` is the picked team's own posted
-spread (e.g. `"Chiefs -3.5"`), `confidence` is the 3-model average
-probability for the picked side, `line` is the picked side's American odds.
+`scripts/26_write_predictions_json.py` formats the week's picks to match
+orb-analytics-web's REAL, LIVE schema -- confirmed by reading
+`Orb-Analytics/MLB-Model/main/predictions.json` directly and the actual
+`predictions.html` JS that consumes it, not orb-analytics-web's README,
+which turned out to be stale (documents full team names and a decimal
+`edge`; the real site uses abbreviations and a percentage `edge`, plus a
+`has_pick` flag). Building against the README's example would have
+produced a file the real site code silently can't render. The real
+contract: `home_team`/`away_team`/`pick` are nflverse abbreviations (`pick`
+must exactly equal one of the other two, since the site's JS does a strict
+string match to figure out which side was picked), `has_pick: true` on
+every entry this script writes, `confidence` is the 3-model average
+probability for the picked side, `edge` is written as a percentage NUMBER
+(`2.34` means 2.34%, not `0.0234` -- our internal edge is a decimal
+fraction, multiplied by 100 here), and `line` is the picked side's own
+American odds. One NFL-specific addition beyond MLB's shape: a `spread`
+field (the picked side's own spread number, e.g. `-3.5`) alongside `line`
+(that side's odds at that spread, e.g. `-110`) -- MLB's single `line` field
+does double duty as both display value and odds input because a moneyline
+number works fine as both; a spread sport doesn't have that luxury.
+Verified end-to-end: fed this script's actual output through the real
+`predictions.html` JS (via a Node harness mocking `fetch`/DOM) and
+confirmed it renders correctly, including a regression check that the
+existing live MLB rendering path was untouched by the shared code this
+NFL path was wired into.
 
 ## Structure
 
