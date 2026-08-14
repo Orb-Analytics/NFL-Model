@@ -60,8 +60,20 @@ def _week_date(season_year: int, week: int) -> str:
     return f"{d.month}/{d.day}/{d.year}"
 
 
-def _units(result_win: bool, odds: int) -> float:
-    if not result_win:
+def _result_label(pick_result: float) -> str:
+    # Pick Result is 1 = win, 0 = loss, 0.5 = push (confirmed against the
+    # real data -- 7 of 264 rows are 0.5, not just 0/1 as first assumed).
+    if pick_result == 1:
+        return "Win"
+    if pick_result == 0.5:
+        return "Push"
+    return "Loss"
+
+
+def _units(result: str, odds: int) -> float:
+    if result == "Push":
+        return 0.0
+    if result == "Loss":
         return -1.0
     return round(odds / 100.0, 4) if odds > 0 else round(100.0 / abs(odds), 4)
 
@@ -79,7 +91,7 @@ def main():
         home_spread = float(row["spread"])
         picked_spread = home_spread if picked_home else -home_spread
         odds = int(row["Odds"])
-        won = row["Pick Result"] == 1
+        result = _result_label(row["Pick Result"])
 
         picks.append({
             "date": _week_date(season_year, int(row["week"])),
@@ -92,17 +104,20 @@ def main():
             "confidence": None,
             "line": odds,
             "edge": None,
-            "result": "Win" if won else "Loss",
-            "units": _units(won, odds),
+            "result": result,
+            "units": _units(result, odds),
             "home_score": None,
             "away_score": None,
         })
 
     wins = sum(1 for p in picks if p["result"] == "Win")
     losses = sum(1 for p in picks if p["result"] == "Loss")
+    pushes = sum(1 for p in picks if p["result"] == "Push")
     total_units = round(sum(p["units"] for p in picks), 2)
     total_picks = len(picks)
-    win_rate = round((wins / total_picks) * 100, 1) if total_picks else 0
+    # Win rate excludes pushes from the denominator (standard convention --
+    # a push is a non-event, not a loss).
+    win_rate = round((wins / (wins + losses)) * 100, 1) if (wins + losses) else 0
 
     output = {
         "model": "NFL",
@@ -111,6 +126,7 @@ def main():
         "summary": {
             "wins": wins,
             "losses": losses,
+            "pushes": pushes,
             "win_rate": win_rate,
             "total_units": total_units,
             "total_picks": total_picks,
@@ -121,7 +137,7 @@ def main():
     with open(OUTPUT_JSON, "w") as f:
         json.dump(output, f, indent=2)
 
-    print(f"Wrote {total_picks} historical picks ({wins}-{losses}, {total_units:+.2f}u) to {OUTPUT_JSON}")
+    print(f"Wrote {total_picks} historical picks ({wins}-{losses}-{pushes}, {total_units:+.2f}u) to {OUTPUT_JSON}")
 
 
 if __name__ == "__main__":
