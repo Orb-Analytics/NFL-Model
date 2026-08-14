@@ -88,10 +88,21 @@ def main():
         away_abbr = NICKNAME_TO_ABBR[row["away_team"]]
         pick_abbr = NICKNAME_TO_ABBR[row["Spread Pick"]]
         picked_home = bool(row["Pick Home?"])
+        home_favorite = bool(row["fav_home"])
         home_spread = float(row["spread"])
         picked_spread = home_spread if picked_home else -home_spread
         odds = int(row["Odds"])
         result = _result_label(row["Pick Result"])
+        # Favorite/underdog status of the PICK, derived from the spread
+        # (fav_home + Pick Home?), NOT from the odds. This is a spread
+        # model -- both sides of a spread are usually priced around -110
+        # regardless of who's actually favored, so the Odds column's sign
+        # (mostly uniform -110, occasionally a slightly better/worse number
+        # from Novig) is not a favorite/underdog signal here the way it
+        # would be for a moneyline sport. picked_home == home_favorite
+        # means the side we picked is the favorite (either home favorite
+        # picked at home, or away "favorite" picked away).
+        picked_favorite = picked_home == home_favorite
 
         picks.append({
             "date": _week_date(season_year, int(row["week"])),
@@ -104,6 +115,7 @@ def main():
             "confidence": None,
             "line": odds,
             "edge": None,
+            "is_favorite": picked_favorite,
             "result": result,
             "units": _units(result, odds),
             "home_score": None,

@@ -132,6 +132,14 @@ def main():
             "away_odds": _int_or_none(row["away_spread_odds"]) if has_home_away_odds else None,
             "line": _int_or_none(row["picked_odds"]),
             "edge": round(float(row["edge"]) * 100, 2),
+            # Whether the PICKED side is the game's actual favorite, derived
+            # from spread_line (not from the sign of the odds -- both sides
+            # of a spread are usually priced around -110 regardless of who's
+            # favored, so odds sign is not a reliable favorite/underdog
+            # signal the way it is for a moneyline sport). The site's
+            # isFavoritePick()/isUnderdogPick() helpers read this field
+            # directly instead of falling back to odds-sign for NFL.
+            "is_favorite": bool(row["picked_favorite"]),
             "notes": notes,
         })
 
