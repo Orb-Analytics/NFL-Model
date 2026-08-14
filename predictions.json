@@ -1,52 +1,77 @@
 {
   "model": "NFL",
-  "generated_at": "2026-08-13T02:49:54Z",
+  "generated_at": "2026-08-14T02:19:51Z",
   "version": "v1.0-3way-consensus-low-edge-favorite",
   "picks": [
     {
       "game_id": "2026_01_TB_CIN",
-      "home_team": "Cincinnati Bengals",
-      "away_team": "Tampa Bay Buccaneers",
-      "pick": "Buccaneers +3.5",
+      "home_team": "CIN",
+      "away_team": "TB",
+      "pick": "TB",
+      "has_pick": true,
       "confidence": 0.5485,
+      "spread": 3.5,
+      "home_odds": -115,
+      "away_odds": -115,
       "line": -115,
-      "notes": "3-way consensus, edge +0.5% (underdog)"
+      "edge": 0.48,
+      "notes": "3-way consensus, edge +0.48% (underdog)"
     },
     {
       "game_id": "2026_01_CLE_JAX",
-      "home_team": "Jacksonville Jaguars",
-      "away_team": "Cleveland Browns",
-      "pick": "Browns +7.5",
+      "home_team": "JAX",
+      "away_team": "CLE",
+      "pick": "CLE",
+      "has_pick": true,
       "confidence": 0.544,
+      "spread": 7.5,
+      "home_odds": -113,
+      "away_odds": -117,
       "line": -117,
-      "notes": "3-way consensus, edge +0.2% (underdog)"
+      "edge": 0.17,
+      "notes": "3-way consensus, edge +0.17% (underdog)"
     },
     {
       "game_id": "2026_01_DEN_KC",
-      "home_team": "Kansas City Chiefs",
-      "away_team": "Denver Broncos",
-      "pick": "Broncos +2.5",
+      "home_team": "KC",
+      "away_team": "DEN",
+      "pick": "DEN",
+      "has_pick": true,
       "confidence": 0.5438,
+      "spread": 2.5,
+      "home_odds": -127,
+      "away_odds": -111,
       "line": -111,
-      "notes": "3-way consensus, edge +0.6% (underdog)"
+      "edge": 0.62,
+      "notes": "3-way consensus, edge +0.62% (underdog)"
     },
     {
       "game_id": "2026_01_WAS_PHI",
-      "home_team": "Philadelphia Eagles",
-      "away_team": "Washington Commanders",
-      "pick": "Commanders +5.5",
+      "home_team": "PHI",
+      "away_team": "WAS",
+      "pick": "WAS",
+      "has_pick": true,
       "confidence": 0.5481,
+      "spread": 5.5,
+      "home_odds": -111,
+      "away_odds": -127,
       "line": -127,
-      "notes": "3-way consensus, edge -0.4% (underdog)"
+      "edge": -0.4,
+      "notes": "3-way consensus, edge -0.40% (underdog)"
     },
     {
       "game_id": "2026_01_ATL_PIT",
-      "home_team": "Pittsburgh Steelers",
-      "away_team": "Atlanta Falcons",
-      "pick": "Falcons +3.5",
+      "home_team": "PIT",
+      "away_team": "ATL",
+      "pick": "ATL",
+      "has_pick": true,
       "confidence": 0.5564,
+      "spread": 3.5,
+      "home_odds": -199,
+      "away_odds": -174,
       "line": -174,
-      "notes": "3-way consensus, edge -2.8% (underdog)"
+      "edge": -2.75,
+      "notes": "3-way consensus, edge -2.75% (underdog)"
     }
   ]
 }
