@@ -797,9 +797,51 @@ LIVE_SCORING_INPUT_CSV = PROCESSED_DIR / "live_scoring_input.csv"
 LIVE_PICKS_CSV = PROCESSED_DIR / "live_picks.csv"
 PREDICTIONS_JSON = ROOT_DIR / "predictions.json"
 
+# --------------------------------------------------------------------------
+# Live production rule v2: 2-model average, de-vigged edge, asymmetric floor
+# (see scripts/28_devigged_edge_breakdown.py, 31_devig_class_edge_breakdown.py,
+# 32_custom_rule_season_report.py, 33_custom_rule_class_breakdown.py)
+# --------------------------------------------------------------------------
+# Replaces the v1 rule above (3-way consensus + THREE_WAY_FAVORITE_EDGE_MAX_THRESHOLD,
+# raw vig-included edge). THREE_WAY_FAVORITE_EDGE_MAX_THRESHOLD is left in
+# place, unused by the live script, since 24_final_combined_rule.py and
+# other backtest scripts still reference it.
+#
+# New rule: 2-model average (logit + XGBoost, no Gaussian Naive Bayes, no
+# 3-way agreement gate) probability, blended against the DE-VIGGED market
+# price (feature_utils.compute_edges_devigged -- normalizes home/away
+# implied probability to sum to 1 before comparing against the model,
+# instead of comparing against the vig-inflated raw price). Pick the side
+# with the higher de-vigged edge on every game, then:
+#   keep the pick if it's an underdog and edge >= LIVE_UNDERDOG_EDGE_MIN
+#   keep the pick if it's a favorite and edge >= LIVE_FAVORITE_EDGE_MIN
+#
+# Motivated by 31's finding: edge size was the ONE statistically significant
+# predictor of accuracy within underdog picks (p=0.011 raw, p=0.035
+# de-vigged) -- the v1 rule took every underdog pick unconditionally, with
+# no edge floor at all. 33's backtest of this exact rule (2-model,
+# de-vigged, favorite>=1%/underdog>=2%) pooled across all 8 backtested
+# seasons (2018-2025): 456-401 (53.2%), +36.17 units, n=857 -- favorites
+# net negative (48.8%, -18.54u), underdogs strongly positive (57.9%,
+# +54.71u). Raw (vig-included) edge at this same 2% threshold was NOT
+# statistically significant (z=0.63 vs. de-vigged z=1.99) -- de-vigging is
+# load-bearing for this rule, not a cosmetic display-only change.
+#
+# CAVEATS, stated plainly (same spirit as every threshold in this build):
+#   1. Both edge-min values were chosen by eyeballing volume/quintile
+#      boundaries on this same backtest data (32's docstring: an initial
+#      1%/0% pass produced 8-15 picks/week, "far too much volume" --
+#      raised to 1%/2% specifically to cut volume down), not derived from a
+#      separate nested walk-forward split. Treat as an informed starting
+#      point, not a rigorously validated optimum.
+#   2. 2021 alone contributed roughly half of the 8-season pooled profit --
+#      not evenly spread across seasons. Watch real-world results for signs
+#      this was a one-season artifact rather than a durable edge.
+LIVE_FAVORITE_EDGE_MIN = 0.01  # keep a favorite pick only if de-vigged edge >= 1%
+LIVE_UNDERDOG_EDGE_MIN = 0.02  # keep an underdog pick only if de-vigged edge >= 2%
+
 # Model/version string written into predictions.json's "version" field --
-# bump this manually whenever CURATED_FEATURES, the model set (21's 3-way
-# consensus), or THREE_WAY_FAVORITE_EDGE_MAX_THRESHOLD change, so the site
-# (and anyone debugging a bad week) can tell which model logic produced a
-# given predictions.json.
-MODEL_VERSION = "v1.0-3way-consensus-low-edge-favorite"
+# bump this manually whenever CURATED_FEATURES, the model set, or the
+# selection rule/thresholds change, so the site (and anyone debugging a bad
+# week) can tell which model logic produced a given predictions.json.
+MODEL_VERSION = "v2.0-2model-devigged-asymmetric-edge"

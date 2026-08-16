@@ -107,14 +107,25 @@ string column, e.g. team abbreviations). Applied to both the team-stats and
 PFR-advstats concatenation.
 
 `scripts/25_live_weekly_scoring.py` fits FINAL production models (logit +
-XGBoost + Naive Bayes) on every completed game in `training_set.csv`
-(no walk-forward split -- that's for validating the method, not for live
-use), scores the next unplayed week, and applies the exact rule validated
-in `24_final_combined_rule.py`: 3-way agreement required, every underdog
-kept, favorites kept only if edge <= `config.THREE_WAY_FAVORITE_EDGE_MAX_THRESHOLD`.
-Same caveat as `24`: that threshold came from a backtest decile boundary,
-not a nested walk-forward re-derivation -- update it if a more rigorous
-version gets built later.
+XGBoost -- 2-model average, no Gaussian Naive Bayes, no 3-way agreement
+gate) on every completed game in `training_set.csv` (no walk-forward split
+-- that's for validating the method, not for live use), scores the next
+unplayed week, and applies the **v2 rule** (see `config.py`'s "Live
+production rule v2" comment, replacing the old `24_final_combined_rule.py`
+3-way-consensus rule): compute the DE-VIGGED edge for both sides
+(`feature_utils.compute_edges_devigged`), pick the side with the higher
+edge, then keep the pick if it's an underdog with edge
+`>= config.LIVE_UNDERDOG_EDGE_MIN` (2%) or a favorite with edge
+`>= config.LIVE_FAVORITE_EDGE_MIN` (1%). Motivated by
+`31_devig_class_edge_breakdown.py`'s finding that edge size was the one
+statistically significant predictor of accuracy within underdog picks --
+the old rule took every underdog pick unconditionally. Backtested
+(`32`/`33_custom_rule_*.py`) across all 8 seasons 2018-2025: 456-401
+(53.2%), +36.17 units, n=857. Same caveat as everywhere else in this build:
+both thresholds came from eyeballing backtest volume/quintile boundaries,
+not a nested walk-forward re-derivation, and roughly half the 8-season
+profit came from a single season (2021) -- watch real-world results
+accordingly.
 
 **Object-dtype defense, three layers deep.** A real live run hit
 statsmodels' cryptic `Pandas data cast to numpy dtype of object` error when

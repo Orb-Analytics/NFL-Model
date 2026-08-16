@@ -1,6 +1,6 @@
 """
 Live weekly scoring: score the NEXT unplayed week of NFL games using
-everything validated in the backtesting pipeline (01-24), and write
+everything validated in the backtesting pipeline (01-33), and write
 data/processed/live_picks.csv -- the input to 26_write_predictions_json.py.
 
 This is the first script in this repo that scores games that haven't been
@@ -16,22 +16,27 @@ no "future fold" to hold out for live scoring -- the walk-forward folds in
 07/21 exist purely to validate the METHOD; this step trusts that method and
 applies it for real).
 
-Rule applied, matching 24_final_combined_rule.py exactly:
-  - Fit logit + XGBoost + Gaussian Naive Bayes on config.CURATED_FEATURES,
-    using every played game in training_set.csv (all of config.SEASONS
-    through the most recently completed week).
-  - Score the upcoming week. Keep a game only if all three models agree on
-    a side via the raw >=0.5 threshold (21's 3-way consensus).
-  - Within that agreed set: keep every underdog pick; keep favorite picks
-    only if edge (3-model average probability vs. Novig's market-implied
-    probability) is <= config.THREE_WAY_FAVORITE_EDGE_MAX_THRESHOLD.
+RULE v2 (replaces the v1 3-way-consensus + raw-edge rule that used to live
+here -- see config.py's "Live production rule v2" comment for the full
+derivation and caveats):
+  - Fit logit + XGBoost on config.CURATED_FEATURES (NO Gaussian Naive
+    Bayes, NO 3-way agreement gate -- this is the 2-model population
+    28_devigged_edge_breakdown.py backtested), using every played game in
+    training_set.csv (all of config.SEASONS through the most recently
+    completed week).
+  - Score the upcoming week. For each game, compute the DE-VIGGED edge
+    (feature_utils.compute_edges_devigged) for both sides and pick whichever
+    side has the higher edge.
+  - Keep the pick if it's an underdog and edge >= config.LIVE_UNDERDOG_EDGE_MIN;
+    keep it if it's a favorite and edge >= config.LIVE_FAVORITE_EDGE_MIN.
   - Pick'em games (spread_line == 0) are excluded, consistent with every
     backtest script.
 
-CAVEAT carried over from 24: THREE_WAY_FAVORITE_EDGE_MAX_THRESHOLD was
-derived from decile boundaries on backtest data, not a nested walk-forward
-re-derivation. This live script applies that same fixed threshold -- update
-config.py if/when a more rigorous threshold is derived.
+CAVEATS carried over from config.py: both edge-min thresholds were chosen
+by eyeballing volume/quintile boundaries on backtest data, not a nested
+walk-forward re-derivation, and the 8-season backtest that validated this
+rule leaned heavily on one strong season (2021). Watch real-world results
+accordingly -- update config.py if/when a more rigorous threshold is derived.
 
 Prerequisites:
   1. python scripts/01_fetch_historical.py   (pulls current season too, per config.SEASONS)
@@ -52,12 +57,11 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 import xgboost as xgb
-from sklearn.naive_bayes import GaussianNB
 
 import config
 from build_features import build_full_dataset
 from feature_engineering import engineer_all
-from feature_utils import american_odds_to_implied_prob
+from feature_utils import american_odds_to_implied_prob, compute_edges_devigged
 from novig_client import fetch_current_lines
 
 
@@ -226,7 +230,9 @@ def main():
         print("No scoreable games remain this week after feature completeness check.")
         return
 
-    # --- Fit logit + xgb + nb on ALL history, predict this week ---------
+    # --- Fit logit + xgb on ALL history, predict this week --------------
+    # 2-model average only (v2 rule) -- no Gaussian Naive Bayes, no 3-way
+    # agreement gate. See config.py's "Live production rule v2" comment.
     X_train = training[curated_cols]
     y_train = training[config.TARGET_COLUMN]
     means = X_train.mean()
@@ -243,45 +249,47 @@ def main():
     xgb_model.fit(X_train, y_train)
     xgb_pred = xgb_model.predict_proba(scoring[curated_cols])[:, 1]
 
-    nb_model = GaussianNB()
-    nb_model.fit(X_train_std, y_train)
-    nb_pred = nb_model.predict_proba(X_score_std)[:, 1]
-
     scoring = scoring.reset_index(drop=True)
     scoring["logit_prob"] = logit_pred
     scoring["xgb_prob"] = xgb_pred
-    scoring["nb_prob"] = nb_pred
-    scoring["avg_prob_3"] = (logit_pred + xgb_pred + nb_pred) / 3
+    scoring["avg_prob"] = (logit_pred + xgb_pred) / 2
 
-    logit_class = (logit_pred >= 0.5).astype(int)
-    xgb_class = (xgb_pred >= 0.5).astype(int)
-    nb_class = (nb_pred >= 0.5).astype(int)
-    agree_3way = (logit_class == xgb_class) & (logit_class == nb_class)
-    scoring["predicted_home_cover"] = logit_class
-    scoring["three_way_agree"] = agree_3way
-
-    print(f"\n3-way agreement: {int(agree_3way.sum())} of {len(scoring)} games.")
-
-    # --- Edge, exactly as in 24_final_combined_rule.py -------------------
-    is_home = scoring["predicted_home_cover"] == 1
-    model_prob_for_pick = np.where(is_home, scoring["avg_prob_3"], 1 - scoring["avg_prob_3"])
+    # --- Edge, de-vigged, exactly as backtested in 28/31/32/33 -----------
+    # feature_utils.compute_edges_devigged normalizes home/away implied
+    # probability to sum to 1 BEFORE comparing against the model, then picks
+    # whichever side has the higher edge. This is now both the SELECTION
+    # basis (which games get picked) and the DISPLAY basis (what
+    # 26_write_predictions_json.py shows as "Win Probability"/"Edge") --
+    # unlike the old v1 rule, there is no longer a separate raw-vig
+    # selection edge and de-vigged display edge; de-vigging is load-bearing
+    # for selection now, confirmed in config.py's comment (raw edge at the
+    # 2% threshold was NOT statistically significant; de-vigged edge was).
+    home_implied_raw = american_odds_to_implied_prob(scoring["home_spread_odds"])
+    away_implied_raw = american_odds_to_implied_prob(scoring["away_spread_odds"])
+    edges = compute_edges_devigged(
+        pd.Series(scoring["avg_prob"].to_numpy(), index=scoring.index),
+        home_implied_raw, away_implied_raw,
+    )
+    is_home = edges["picked_side"].to_numpy() == "home"
+    scoring["predicted_home_cover"] = is_home.astype(int)
+    scoring["edge"] = edges["picked_edge"].to_numpy()
+    scoring["market_implied_prob_devigged"] = edges["picked_market_implied"].to_numpy()
+    scoring["confidence"] = edges["picked_confidence"].to_numpy()
     picked_odds = np.where(is_home, scoring["home_spread_odds"], scoring["away_spread_odds"])
-    implied_prob_for_pick = american_odds_to_implied_prob(pd.Series(picked_odds)).to_numpy()
-    scoring["edge"] = config.EDGE_MODEL_WEIGHT * (model_prob_for_pick - implied_prob_for_pick)
     scoring["picked_odds"] = picked_odds
 
     picked_em = scoring["spread_line"] == 0
     picked_favorite = np.where(is_home, scoring["spread_line"] > 0, scoring["spread_line"] < 0)
     scoring["picked_favorite"] = picked_favorite
 
-    keep_underdog = agree_3way & ~picked_favorite & ~picked_em
-    keep_favorite = agree_3way & picked_favorite & ~picked_em & \
-        (scoring["edge"] <= config.THREE_WAY_FAVORITE_EDGE_MAX_THRESHOLD)
+    keep_underdog = ~picked_favorite & ~picked_em & (scoring["edge"] >= config.LIVE_UNDERDOG_EDGE_MIN)
+    keep_favorite = picked_favorite & ~picked_em & (scoring["edge"] >= config.LIVE_FAVORITE_EDGE_MIN)
     selected = keep_underdog | keep_favorite
 
     picks = scoring[selected].copy()
     print(f"Final rule picks this week: {len(picks)} of {len(scoring)} scored games "
-          f"({int(keep_underdog.sum())} underdog, {int((keep_favorite).sum())} low-edge favorite).")
+          f"({int(keep_underdog.sum())} underdog >= {config.LIVE_UNDERDOG_EDGE_MIN:.0%} edge, "
+          f"{int(keep_favorite.sum())} favorite >= {config.LIVE_FAVORITE_EDGE_MIN:.0%} edge).")
 
     config.PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     scoring.to_csv(config.LIVE_SCORING_INPUT_CSV, index=False)

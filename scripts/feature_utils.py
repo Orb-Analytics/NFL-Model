@@ -85,6 +85,15 @@ def compute_edges(model_home_prob: pd.Series, home_implied: pd.Series, away_impl
     Shared by 08_edge_based_evaluation.py and
     09_consensus_edge_walk_forward.py so both scripts agree on exactly what
     "edge" means.
+
+    NOTE: home_implied/away_implied are used RAW here (vig included, do NOT
+    sum to 1) -- this is the ORIGINAL edge definition every backtest
+    threshold in this build (15/18/19/20/24's *_EDGE_MAX_THRESHOLD values,
+    THREE_WAY_FAVORITE_EDGE_MAX_THRESHOLD) was calibrated against. See
+    compute_edges_devigged() below for the corrected version used to
+    display the live site's "Win Probability" -- the two are deliberately
+    different functions so changing the live DISPLAY math never silently
+    changes what these already-calibrated SELECTION thresholds mean.
     """
     model_away_prob = 1 - model_home_prob
     home_edge = config.EDGE_MODEL_WEIGHT * (model_home_prob - home_implied)
@@ -94,6 +103,54 @@ def compute_edges(model_home_prob: pd.Series, home_implied: pd.Series, away_impl
     picked_side = np.where(pick_home, "home", "away")
     picked_edge = np.where(pick_home, home_edge, away_edge)
     return pd.DataFrame({"picked_side": picked_side, "picked_edge": picked_edge}, index=model_home_prob.index)
+
+
+def compute_edges_devigged(model_home_prob: pd.Series, home_implied: pd.Series, away_implied: pd.Series) -> pd.DataFrame:
+    """Same as compute_edges(), except home_implied/away_implied are
+    de-vigged (normalized to sum to 1) BEFORE blending with the model's
+    probability. This is what orb-analytics-web's predictions.html now
+    displays as "Win Probability"/"Market Implied"/"Edge" for live NFL
+    picks (see 26_write_predictions_json.py) -- home_cover_prob +
+    away_cover_prob = 1 exactly, matching what the raw model output
+    already guarantees on its own, unlike compute_edges() above (raw
+    vig-included implied probabilities sum to ~103-107%, not 100%, so a
+    home-side and away-side blend built from them independently do NOT sum
+    to 1).
+
+    Returns picked_side/picked_edge (same shape as compute_edges) PLUS
+    picked_confidence -- the final de-vigged blended cover probability for
+    the picked side (== market_implied_devigged + picked_edge, i.e. what
+    the live site calls "Win Probability").
+
+    Deliberately a SEPARATE function from compute_edges(), not a flag on
+    it -- every backtested edge threshold in this build (15/18/19/20/24)
+    was calibrated against the RAW-vig definition. Use this function only
+    for evaluating whether the CORRECTED probability/edge tracks accuracy
+    -- do not use it to re-gate any of those already-calibrated selection
+    rules without re-deriving their thresholds from scratch.
+    """
+    model_away_prob = 1 - model_home_prob
+    vig_sum = home_implied + away_implied
+    home_implied_devig = home_implied / vig_sum
+    away_implied_devig = away_implied / vig_sum
+
+    home_edge = config.EDGE_MODEL_WEIGHT * (model_home_prob - home_implied_devig)
+    away_edge = config.EDGE_MODEL_WEIGHT * (model_away_prob - away_implied_devig)
+
+    pick_home = home_edge >= away_edge
+    picked_side = np.where(pick_home, "home", "away")
+    picked_edge = np.where(pick_home, home_edge, away_edge)
+    picked_market_implied = np.where(pick_home, home_implied_devig, away_implied_devig)
+    picked_confidence = picked_market_implied + picked_edge
+    return pd.DataFrame(
+        {
+            "picked_side": picked_side,
+            "picked_edge": picked_edge,
+            "picked_market_implied": picked_market_implied,
+            "picked_confidence": picked_confidence,
+        },
+        index=model_home_prob.index,
+    )
 
 
 def evaluate(y_true: np.ndarray, y_pred_proba: np.ndarray, label: str) -> dict:

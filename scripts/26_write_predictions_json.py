@@ -38,13 +38,13 @@ to MLB's "line"); `spread` is the picked side's own spread number.
     {
       "model": "NFL",
       "generated_at": "2026-09-09T13:00:00Z",
-      "version": "v1.0-3way-consensus-low-edge-favorite",
+      "version": "v2.0-2model-devigged-asymmetric-edge",
       "picks": [
         {
           "game_id": "...", "home_team": "KC", "away_team": "BUF", "pick": "KC",
           "has_pick": true, "confidence": 0.58, "spread": -3.5,
           "home_odds": -110, "away_odds": -110, "line": -110,
-          "edge": 0.34, "notes": "3-way consensus, edge +0.34% (favorite)"
+          "edge": 0.34, "notes": "2-model avg (logit+xgb), de-vigged edge +0.34% (favorite)"
         }
       ]
     }
@@ -57,11 +57,13 @@ needed on the site side.
 "home_team"/"away_team"/"pick" are nflverse's own team abbreviations
 (matching MLB's real behavior of using abbreviations, not full names --
 the site's JS checks `pick.pick === pick.home_team` for exact string
-equality, so these must match). "confidence" = the 3-model average
-probability for the picked side (same avg_prob_3 used to compute edge in
-25). "edge" is written as a PERCENTAGE NUMBER (2.34 = 2.34%), matching
-MLB's real convention -- our internal edge is a decimal fraction (e.g.
-0.0034), so it's multiplied by 100 here.
+equality, so these must match). "confidence" = the de-vigged, market-
+regressed cover probability for the picked side (25_live_weekly_scoring.py's
+"confidence" column, from feature_utils.compute_edges_devigged -- the
+2-model logit+xgb average blended against the de-vigged market price).
+"edge" is written as a PERCENTAGE NUMBER (2.34 = 2.34%), matching MLB's
+real convention -- our internal edge is a decimal fraction (e.g. 0.0034),
+so it's multiplied by 100 here.
 
 Run:
     python scripts/26_write_predictions_json.py
@@ -107,16 +109,37 @@ def main():
               "will be populated). Check 25_live_weekly_scoring.py's scoring DataFrame if this is "
               "unexpected -- these columns should carry through from schedules via build_full_dataset.")
 
+    has_market_implied = "market_implied_prob_devigged" in picks_df.columns
+    has_confidence = "confidence" in picks_df.columns
+
     picks = []
     for _, row in picks_df.iterrows():
         picked_home = row["predicted_home_cover"] == 1
         picked_abbr = row["home_team"] if picked_home else row["away_team"]
 
         spread_display = _picked_team_spread_display(row["spread_line"], picked_home)
-        confidence = float(row["avg_prob_3"]) if picked_home else float(1 - row["avg_prob_3"])
+
+        # v2 rule (25_live_weekly_scoring.py): "confidence" and "edge" are
+        # already the final, de-vigged numbers computed once by
+        # feature_utils.compute_edges_devigged -- the SAME basis used to
+        # decide whether this game got picked in the first place. Unlike
+        # the old v1 rule, there is no longer a separate raw-vig selection
+        # edge and de-vigged display edge to reconcile; this is read
+        # straight through.
+        if has_confidence and has_market_implied:
+            confidence = float(row["confidence"])
+            market_implied = float(row["market_implied_prob_devigged"])
+            display_edge = float(row["edge"])
+        else:
+            # Fallback for older live_picks.csv files written before the
+            # v2 columns existed -- avg_prob_3 was the old 3-model average.
+            market_implied = None
+            model_prob_for_pick = float(row["avg_prob_3"]) if picked_home else float(1 - row["avg_prob_3"])
+            confidence = model_prob_for_pick
+            display_edge = float(row["edge"])
 
         notes = (
-            f"3-way consensus, edge {row['edge']*100:+.2f}% "
+            f"2-model avg (logit+xgb), de-vigged edge {row['edge']*100:+.2f}% "
             f"({'favorite' if row['picked_favorite'] else 'underdog'})"
         )
 
@@ -131,7 +154,13 @@ def main():
             "home_odds": _int_or_none(row["home_spread_odds"]) if has_home_away_odds else None,
             "away_odds": _int_or_none(row["away_spread_odds"]) if has_home_away_odds else None,
             "line": _int_or_none(row["picked_odds"]),
-            "edge": round(float(row["edge"]) * 100, 2),
+            # De-vigged market-implied probability for the picked side, so
+            # the site can show a "Market Implied" number consistent with
+            # confidence/edge instead of recomputing a raw (vig-included)
+            # one client-side from the odds (which would reintroduce the
+            # same inconsistency this whole change fixes).
+            "market_implied": round(market_implied, 4) if market_implied is not None else None,
+            "edge": round(display_edge * 100, 2),
             # Whether the PICKED side is the game's actual favorite, derived
             # from spread_line (not from the sign of the odds -- both sides
             # of a spread are usually priced around -110 regardless of who's
