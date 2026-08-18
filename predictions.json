@@ -1,6 +1,6 @@
 {
   "model": "NFL",
-  "generated_at": "2026-08-16T01:46:02Z",
+  "generated_at": "2026-08-18T13:49:56Z",
   "version": "v2.0-2model-devigged-asymmetric-edge",
   "picks": [
     {
@@ -9,15 +9,15 @@
       "away_team": "CHI",
       "pick": "CAR",
       "has_pick": true,
-      "confidence": 0.5017,
+      "confidence": 0.5046,
       "spread": 2.5,
       "home_odds": -102,
-      "away_odds": -127,
+      "away_odds": -122,
       "line": -102,
-      "market_implied": 0.4744,
-      "edge": 2.73,
+      "market_implied": 0.4789,
+      "edge": 2.57,
       "is_favorite": false,
-      "notes": "2-model avg (logit+xgb), de-vigged edge +2.73% (underdog)"
+      "notes": "2-model avg (logit+xgb), de-vigged edge +2.57% (underdog)"
     },
     {
       "game_id": "2026_01_NO_DET",
@@ -25,15 +25,15 @@
       "away_team": "NO",
       "pick": "NO",
       "has_pick": true,
-      "confidence": 0.4902,
+      "confidence": 0.4885,
       "spread": 6.5,
-      "home_odds": -127,
+      "home_odds": -130,
       "away_odds": 104,
       "line": 104,
-      "market_implied": 0.467,
-      "edge": 2.32,
+      "market_implied": 0.4645,
+      "edge": 2.41,
       "is_favorite": false,
-      "notes": "2-model avg (logit+xgb), de-vigged edge +2.32% (underdog)"
+      "notes": "2-model avg (logit+xgb), de-vigged edge +2.41% (underdog)"
     },
     {
       "game_id": "2026_01_BAL_IND",
@@ -41,15 +41,15 @@
       "away_team": "BAL",
       "pick": "BAL",
       "has_pick": true,
-      "confidence": 0.4957,
+      "confidence": 0.4971,
       "spread": -3.5,
-      "home_odds": -125,
-      "away_odds": -104,
-      "line": -104,
-      "market_implied": 0.4785,
-      "edge": 1.72,
+      "home_odds": -120,
+      "away_odds": -102,
+      "line": -102,
+      "market_implied": 0.4807,
+      "edge": 1.64,
       "is_favorite": true,
-      "notes": "2-model avg (logit+xgb), de-vigged edge +1.72% (favorite)"
+      "notes": "2-model avg (logit+xgb), de-vigged edge +1.64% (favorite)"
     },
     {
       "game_id": "2026_01_CLE_JAX",
@@ -57,15 +57,15 @@
       "away_team": "CLE",
       "pick": "CLE",
       "has_pick": true,
-      "confidence": 0.5228,
+      "confidence": 0.5214,
       "spread": 7.5,
-      "home_odds": -113,
-      "away_odds": -113,
-      "line": -113,
-      "market_implied": 0.5,
-      "edge": 2.28,
+      "home_odds": -108,
+      "away_odds": -106,
+      "line": -106,
+      "market_implied": 0.4977,
+      "edge": 2.36,
       "is_favorite": false,
-      "notes": "2-model avg (logit+xgb), de-vigged edge +2.28% (underdog)"
+      "notes": "2-model avg (logit+xgb), de-vigged edge +2.36% (underdog)"
     },
     {
       "game_id": "2026_01_DEN_KC",
@@ -73,15 +73,15 @@
       "away_team": "DEN",
       "pick": "DEN",
       "has_pick": true,
-      "confidence": 0.5073,
+      "confidence": 0.5022,
       "spread": 2.5,
-      "home_odds": -122,
-      "away_odds": -106,
-      "line": -106,
-      "market_implied": 0.4836,
-      "edge": 2.37,
+      "home_odds": -120,
+      "away_odds": 102,
+      "line": 102,
+      "market_implied": 0.4758,
+      "edge": 2.65,
       "is_favorite": false,
-      "notes": "2-model avg (logit+xgb), de-vigged edge +2.37% (underdog)"
+      "notes": "2-model avg (logit+xgb), de-vigged edge +2.65% (underdog)"
     },
     {
       "game_id": "2026_01_ARI_LAC",
@@ -89,31 +89,15 @@
       "away_team": "ARI",
       "pick": "LAC",
       "has_pick": true,
-      "confidence": 0.4605,
+      "confidence": 0.4879,
       "spread": -10.5,
-      "home_odds": 102,
-      "away_odds": -199,
-      "line": 102,
-      "market_implied": 0.4265,
-      "edge": 3.39,
+      "home_odds": 104,
+      "away_odds": -125,
+      "line": 104,
+      "market_implied": 0.4687,
+      "edge": 1.91,
       "is_favorite": true,
-      "notes": "2-model avg (logit+xgb), de-vigged edge +3.39% (favorite)"
-    },
-    {
-      "game_id": "2026_01_ATL_PIT",
-      "home_team": "PIT",
-      "away_team": "ATL",
-      "pick": "ATL",
-      "has_pick": true,
-      "confidence": 0.4904,
-      "spread": 3.5,
-      "home_odds": -199,
-      "away_odds": -130,
-      "line": -130,
-      "market_implied": 0.4592,
-      "edge": 3.12,
-      "is_favorite": false,
-      "notes": "2-model avg (logit+xgb), de-vigged edge +3.12% (underdog)"
+      "notes": "2-model avg (logit+xgb), de-vigged edge +1.91% (favorite)"
     }
   ]
 }
