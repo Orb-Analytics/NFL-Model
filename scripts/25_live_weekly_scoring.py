@@ -16,27 +16,34 @@ no "future fold" to hold out for live scoring -- the walk-forward folds in
 07/21 exist purely to validate the METHOD; this step trusts that method and
 applies it for real).
 
-RULE v2 (replaces the v1 3-way-consensus + raw-edge rule that used to live
-here -- see config.py's "Live production rule v2" comment for the full
-derivation and caveats):
+RULE v3 (replaces v2's de-vigged asymmetric-floor rule -- see config.py's
+"Live production rule v3" comment for the full derivation, real backtest
+numbers, and caveats):
   - Fit logit + XGBoost on config.CURATED_FEATURES (NO Gaussian Naive
-    Bayes, NO 3-way agreement gate -- this is the 2-model population
-    28_devigged_edge_breakdown.py backtested), using every played game in
-    training_set.csv (all of config.SEASONS through the most recently
-    completed week).
-  - Score the upcoming week. For each game, compute the DE-VIGGED edge
-    (feature_utils.compute_edges_devigged) for both sides and pick whichever
-    side has the higher edge.
-  - Keep the pick if it's an underdog and edge >= config.LIVE_UNDERDOG_EDGE_MIN;
-    keep it if it's a favorite and edge >= config.LIVE_FAVORITE_EDGE_MIN.
+    Bayes, NO 3-way agreement gate -- same 2-model population as v2).
+  - Score the upcoming week. For each game, compute the RAW (real,
+    vig-included price) edge (feature_utils.compute_edges) for both sides
+    and pick whichever side has the higher edge.
+  - Keep the pick if edge >= config.LIVE_UNDERDOG_EDGE_MIN (underdog) or
+    >= config.LIVE_FAVORITE_EDGE_MIN (favorite) -- both currently 1%,
+    symmetric. Never publish a pick with edge <= 0, by construction (both
+    floors are positive).
   - Pick'em games (spread_line == 0) are excluded, consistent with every
     backtest script.
+  - "Market Implied" and "Win Probability" on the site are now BOTH raw
+    (real-price) based too -- see the edge/confidence block below. This is
+    a deliberate change from v2: readers compare picks against the actual
+    price they'd bet at, not a theoretical de-vigged fair price.
 
 CAVEATS carried over from config.py: both edge-min thresholds were chosen
-by eyeballing volume/quintile boundaries on backtest data, not a nested
-walk-forward re-derivation, and the 8-season backtest that validated this
-rule leaned heavily on one strong season (2021). Watch real-world results
-accordingly -- update config.py if/when a more rigorous threshold is derived.
+by eyeballing this same backtest data, not a nested walk-forward
+re-derivation; favorites are the weaker half of this rule by every measure
+tried and are included for class balance, not because the data makes a
+strong case for them; 2021 remains an outlier season propping up
+multi-season pooled numbers throughout this build. Watch real-world results
+accordingly -- update config.py if/when a more rigorous threshold is
+derived, or drop LIVE_FAVORITE_EDGE_MIN picks first if favorites
+underperform live.
 
 Prerequisites:
   1. python scripts/01_fetch_historical.py   (pulls current season too, per config.SEASONS)
@@ -61,7 +68,7 @@ import xgboost as xgb
 import config
 from build_features import build_full_dataset
 from feature_engineering import engineer_all
-from feature_utils import american_odds_to_implied_prob, compute_edges_devigged
+from feature_utils import american_odds_to_implied_prob, compute_edges
 from novig_client import fetch_current_lines
 
 
@@ -254,27 +261,37 @@ def main():
     scoring["xgb_prob"] = xgb_pred
     scoring["avg_prob"] = (logit_pred + xgb_pred) / 2
 
-    # --- Edge, de-vigged, exactly as backtested in 28/31/32/33 -----------
-    # feature_utils.compute_edges_devigged normalizes home/away implied
-    # probability to sum to 1 BEFORE comparing against the model, then picks
-    # whichever side has the higher edge. This is now both the SELECTION
-    # basis (which games get picked) and the DISPLAY basis (what
-    # 26_write_predictions_json.py shows as "Win Probability"/"Edge") --
-    # unlike the old v1 rule, there is no longer a separate raw-vig
-    # selection edge and de-vigged display edge; de-vigging is load-bearing
-    # for selection now, confirmed in config.py's comment (raw edge at the
-    # 2% threshold was NOT statistically significant; de-vigged edge was).
+    # --- Edge, RAW (real price), per config.py's "Live production rule v3"
+    # comment -- feature_utils.compute_edges compares the model directly
+    # against the actual vig-included market price (home_implied + away_implied
+    # sums to ~103-107%, NOT normalized to 100%), then picks whichever side
+    # has the higher edge. This is now both the SELECTION basis (which games
+    # get picked) and the DISPLAY basis ("Market Implied"/"Win Probability"/
+    # "Edge" in 26_write_predictions_json.py) -- deliberate: picks are
+    # evaluated against the real, tradeable price, matching MLB-Model's
+    # convention and the explicit "no negative edge, ever" policy (edge
+    # here can be negative for a side, but both LIVE_FAVORITE_EDGE_MIN and
+    # LIVE_UNDERDOG_EDGE_MIN are positive floors, so nothing negative is
+    # ever published).
+    #
+    # NOTE: because raw home_implied + away_implied don't sum to 100%,
+    # "confidence" (Win Probability) built as market_implied + edge does
+    # NOT guarantee home_confidence + away_confidence = 100% across the two
+    # sides of a game -- a known, accepted tradeoff of using real prices
+    # (the same one v2's de-vigged edge was built to avoid). Confirmed
+    # acceptable per explicit direction: real prices take priority.
     home_implied_raw = american_odds_to_implied_prob(scoring["home_spread_odds"])
     away_implied_raw = american_odds_to_implied_prob(scoring["away_spread_odds"])
-    edges = compute_edges_devigged(
+    edges = compute_edges(
         pd.Series(scoring["avg_prob"].to_numpy(), index=scoring.index),
         home_implied_raw, away_implied_raw,
     )
     is_home = edges["picked_side"].to_numpy() == "home"
     scoring["predicted_home_cover"] = is_home.astype(int)
     scoring["edge"] = edges["picked_edge"].to_numpy()
-    scoring["market_implied_prob_devigged"] = edges["picked_market_implied"].to_numpy()
-    scoring["confidence"] = edges["picked_confidence"].to_numpy()
+    picked_market_implied = np.where(is_home, home_implied_raw.to_numpy(), away_implied_raw.to_numpy())
+    scoring["market_implied"] = picked_market_implied
+    scoring["confidence"] = picked_market_implied + scoring["edge"].to_numpy()
     picked_odds = np.where(is_home, scoring["home_spread_odds"], scoring["away_spread_odds"])
     scoring["picked_odds"] = picked_odds
 
